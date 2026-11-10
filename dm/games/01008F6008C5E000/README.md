@@ -12,16 +12,16 @@ Playable on the Mac: language, look and name selection, the academy settings,
 the opening, the Paldea flyover, getting up in the bedroom, walking, camera
 control, the main menu and autosave, and reloading that save. iPhone testing
 is pending; no IPA has been built yet.
-Only 1.0.0 is registered. The dump folder also holds update 4.0.0
-(`v786432`), so build with `scripts/build_ipa_from_nsp.py <dump folder>
--p v0` (add `--platform mac` for a Mac build); without `-p` the
+Only 1.0.0 is registered. The NSP folder also holds update 4.0.0
+(`v786432`), so build with `scripts/build_ipa_from_nsp.py <NSP folder> -k
+<prod.keys> -p v0` (add `--platform mac` for a Mac build); without `-p` the
 builder takes the newest version and derives a profile without these checks.
 
 ## What it needs
 
 The same keys as Scarlet's profile, for the same reasons
 ([Scarlet, Memory](../0100A3D008C5C000/README.md#memory)): the alias region
-for the host's StandardAllocator cap, `mem_map_limit` (now every game's default) for the startup
+for the host's StandardAllocator cap, `mem_map_limit on` for the startup
 probe of all allocatable memory, `depth_mode zero` for the game's
 near = 0 depth mode, and `pad_layout full`. The 62 MB node-area cut and the
 alignment of large regions come with the `sdk` build (`dm/tools/sdk_patches.py`
@@ -102,4 +102,6 @@ No `patches.py`.
 
 ## Found on this game
 
-Nothing new: the findings are Scarlet's ([Found on this game](../0100A3D008C5C000/README.md#found-on-this-game)).
+The other findings are Scarlet's ([Found on this game](../0100A3D008C5C000/README.md#found-on-this-game)).
+
+- [Bluetooth LE at boot](../../../docs/reference/services.md#bluetooth-le-at-boot): 3.0.1 (`v720896`, a derived profile) calls `nn::bluetooth::InitializeBle` a second after boot and aborted without the `bt` service; the host answers the BLE calls offline (resolved).

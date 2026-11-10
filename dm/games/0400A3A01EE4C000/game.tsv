@@ -46,6 +46,10 @@ android_window	1280x720
 present_interval	display
 draw_barriers	game
 
+# ---- Pipelines ----
+# the game sets near = 0 (the log's depth mode line): the pipeline bases made before it runs are made for that mode
+depth_mode	zero
+
 # ---- Shader split (shader_split.py) ----
 shader_groups	/motor_asset_re/=rdb
 shader_note	Pokemon Pokopia shaders

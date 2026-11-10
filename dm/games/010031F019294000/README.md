@@ -39,7 +39,7 @@ No code of the game is cut. The game asks for present interval 1, so it needs no
 
 ## Mac routes
 
-- Build with `scripts/build_ipa_from_nsp.py <dump folder> --platform mac`; its last line runs the game. The picture is a 1280x720 crop of the 1920x1080 window texture (`nvnWindowSetCrop`): screenshots from `DM_CTL` / `DM_NVN_SHOT` need `DM_NVN_SHOT_OUT=1280x720` (or the window's size) to show the crop rather than the whole texture.
+- Build with `scripts/build_ipa_from_nsp.py <NSP folder> -k <prod.keys> --platform mac`; its last line runs the game. The picture is a 1280x720 crop of the 1920x1080 window texture (`nvnWindowSetCrop`): screenshots from `DM_CTL` / `DM_NVN_SHOT` need `DM_NVN_SHOT_OUT=1280x720` (or the window's size) to show the crop rather than the whole texture.
 - From a fresh save, through `DM_CTL`: A at "Press any Button!" (about 20 s after boot), A (the autosave notice), A ("Creating save data"). The opening movie starts; A, A, Left, A skips it. A (the tilt card) starts the tutorial island: tilt the left stick to roll, the right stick turns the camera, and A goes through the dialogue. The Spin Dash wants B released while the stick is still tilted: `B~0.6`, `B+LUp~0.6`, `LUp~1` as three lines.
 
 ## Testing
@@ -50,6 +50,7 @@ No code of the game is cut. The game asks for present interval 1, so it needs no
 
 ## Open
 
+- **Current (2026-11-05):** the translator deletes 490 bindless accesses in 245 shaders (245 pixel; texture2D 490), whose results read 0: each named by its `[RED]` line in the build's log. The cause is not traced, and whether a route reaches them is not known. [Losses a shader build reports](../../../docs/reference/shaders.md#losses-a-shader-build-reports).
 - iOS: no IPA built yet; untested on a device.
 - Not checked: the story's first world, the battle and multiplayer modes, sound on a Mac with audio out.
 - Only update 2.20 is registered. Other versions come from a derived profile.

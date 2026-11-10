@@ -23,6 +23,7 @@ on:
       - 'integrate-*'
       - 'android-*'
       - 'custom-*'
+      - 'feat/*'
     paths:
       - 'android/**'
       - 'dm/**'

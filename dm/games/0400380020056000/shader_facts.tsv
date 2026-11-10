@@ -138,7 +138,6 @@
 7e4702c3355da72b	{"local":[8,8,8],"shared":0}
 7f82983230082a94	{"local":[16,16,1],"shared":0}
 7fe7e9c86dbedf95	{"local":[32,8,1],"shared":1024}
-800215a0f8d0c44d	{"local":[32,1,1],"mesh":[96,32,128,0,1,2,3,4,5,6,7],"pair":["5f06ec80e95d71e3"],"shared":0}
 80777df8ebdaba4c	{"local":[16,16,1],"shared":9216}
 80d1decfd0b5cfc7	{"local":[256,1,1],"shared":4096}
 80f5c3c85bdf43bb	{"local":[128,1,1],"shared":4096}

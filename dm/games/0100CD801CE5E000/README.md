@@ -9,7 +9,7 @@ On the Mac: the intro, the title, a new run by touch and the tutorial's first st
 | Setting | Where | Why |
 |---|---|---|
 | `op_mode handheld` | [`game.tsv`](game.tsv) | the Switch build plays by touch there (SDL turns the touch screen into LÖVE touches and mouse presses: tap a card, drag it): on the iPhone the touches outside the gamepad controls, on the Mac the mouse. Docked it reads only the pads. Its window is then the 1280x720 handheld display |
-| `pad_layout touch` | `game.tsv` | the virtual gamepad starts in its Tap layout (only the layout button; every touch goes to the game), since the 2D layout's corners cover Run Info, Options and the deck; the layout button brings back 2D and 3D |
+| `pad_layout touch` | `game.tsv` | the virtual gamepad starts in its Tap layout (only the menu button; every touch goes to the game), since the 2D layout's corners cover Run Info, Options and the deck; the in-game menu's Controller layout brings back 2D and 3D |
 | [`gl_capture.tsv`](gl_capture.tsv) | profile | the 35 shaders LÖVE puts together at run time, which no game file holds; the NSP script captures them on the Mac; see [Shaders](#shaders) |
 | `modules main sdk` | `game.tsv` | `subsdk0` / `subsdk1` are NVIDIA's OpenGL and Vulkan drivers, which program the GPU through NvRm: never loaded, the GL layer answers `main`'s EGL imports |
 | `sys_resource 0x0`; `mem_reserve 0xf0000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | no system resource, so no virtual address memory: `nninitStartup` gives its malloc a heap of the pool − used memory, which it maps only as it touches it; `main`'s 264 MB bss counts as used memory |
@@ -56,7 +56,7 @@ LÖVE's graphics module is its own OpenGL backend, so its choices follow what th
 
 General host changes first needed here; each applies to every game:
 
-- **Resolved: Homebrew .NET runtime discovery** for the shader tools: [Homebrew .NET is on PATH but apphosts cannot find the runtime](../../../docs/reference/packing.md#homebrew-net-is-on-path-but-apphosts-cannot-find-the-runtime).
+- **Resolved: Homebrew .NET runtime discovery** for the first extraction and shader tools: [Homebrew .NET is on PATH but apphosts cannot find the runtime](../../../docs/reference/packing.md#homebrew-net-is-on-path-but-apphosts-cannot-find-the-runtime).
 - **The GL layer's core-profile paths** (`GL_CONTEXT_PROFILE_MASK`, persistently mapped buffers and fences, attribute bindings and current values, uniform queries, texture storage, 3D and array textures, swizzles, mipmaps, base-vertex and instanced draws, blits) in `hle_gl.m`, and **`DM_GL_STUBS=1`**: [The GL core profile and persistently mapped buffers](../../../docs/reference/rendering.md#the-gl-core-profile-and-persistently-mapped-buffers), [GL uniforms, pipelines and attributes](../../../docs/reference/rendering.md#gl-uniforms-pipelines-and-attributes), [GL textures, swizzles and uploads](../../../docs/reference/rendering.md#gl-textures-swizzles-and-uploads), [GL draws and framebuffers](../../../docs/reference/rendering.md#gl-draws-and-framebuffers), [Which GL functions a game calls](../../../docs/reference/rendering.md#which-gl-functions-a-game-calls).
 - **`loader_census.py` following registers** (LÖVE's glad), and `vkGetInstanceProcAddr` left out of `profile_guess.py`'s Vulkan count: same section.
 - **GL shaders captured at run time** (`DM_GL_CAPTURE`, `gl_capture.tsv`, the NSP script's `capture_shaders`): [development.md, The packing script in detail](../../../docs/development.md#the-packing-script-in-detail).
@@ -65,4 +65,4 @@ General host changes first needed here; each applies to every game:
 
 ## Open
 
-- The player-facing [README](../../../docs/nxnative.md) says the games outside its 2D list start in the 3D layout; Balatro starts in Tap (its gallery entry says "played by touch").
+- Resolved: the player-facing [README](../../../README.md) now links to the full games table instead of describing original Switch games' control layouts. Balatro's Tap layout is documented in this note.

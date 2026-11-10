@@ -17,7 +17,7 @@
 - The title ID is the program ID in `main.npdm`. A dump has no control data: no `control.nacp` or `icon.jpg`, so the app name comes from the profile (or `--app-name`) and the app has no icon.
 - An update's RomFS is packed on its own, never laid over the base (Donkey Kong Bananza 458752 drops 42 base files). An update without code modules of its own runs the base game's (`pack_dump.version_part`).
 
-## ExeFS / RomFS
+## NSP → NCA → ExeFS / RomFS
 
 - `scripts/build_ipa_from_nsp.py <dump folder>` packs each version it needs into `<dump folder>/<title ID>_build/extract/v<version>/` (`ExeFS/` and one `RomFS.img`) and the DLC into `aoc/<index>.img`. A game with no profile is surveyed from the newest version first: `<title ID>_survey/extract/` holds a copy of its code modules, a RomFS manifest (path, size, first 32 bytes of each file) and the RomFS's NRO modules.
 - ExeFS holds `main.npdm`, `rtld` (usually), `main`, `sdk` and sometimes `subsdk*` modules (NSO). D2R and Mario both had only `main` + `sdk` worth loading.

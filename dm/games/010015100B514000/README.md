@@ -15,7 +15,7 @@ No game-specific executable cuts. `dm/tools/sdk_patches.py`'s SDK-wide rules cut
 
 - v0 (1.0.0), 1.0.1 (v65536) and 1.2.1 (v327680). With 1.2.1 layered over v0, unchanged files become APFS clones, so the merged RomFS adds only about 114 MB to the 3.5 GB base.
 - 1.2.1 imports 28 SDK functions v0 did not, which the host answers: `nn::nfp` (amiibo, initialized at boot) finds none, `pl::IsRunningOnOunce` (is this a Switch 2) is false, `ec::ShowShopApplicationInformationForUpgrade` is a no-op, `account::PopOpenUsers` returns none and `aoc::CountAddOnContent` none. Mario only reads the count from `PopOpenUsers` and falls back to `TryOpenPreselectedUser` on 0, and counts add-on content only on a Switch 2 (`hle_sdk16.c`, `hle_account.c`, `hle_misc.c`).
-- 1.2.1 compresses the NACP's title area (a u16 size, then raw deflate inflating to 32 entries of 0x300 bytes), which `dm/tools/nacp.py` decodes.
+- 1.2.1 compresses the NACP's title area (a u16 size, then raw deflate inflating to 32 entries of 0x300 bytes), which LibHac 0.19 does not decode; `nx_extract` and the NSP script do. Its patch NCA (key generation 17) makes hactool stop with `Invalid BKTR layout!`, which is why `nx_extract` uses LibHac.
 
 ## Memory
 
@@ -100,9 +100,11 @@ Game-specific findings; the general host changes they led to are listed under [F
 
 ## Found on this game
 
+- **Joy-Cons as dual or single npads:** [Joy-Cons as dual or single npads](../../../docs/reference/services.md#joy-cons-as-dual-or-single-npads): choosing two players splits a Joy-Con 2 pair through the controller applet, one sideways Joy-Con each.
 - [Offline pipeline archive missing for the device GPU](../../../docs/reference/shaders.md#offline-pipeline-archive-missing-for-the-device-gpu): archive targets can follow profile metadata while iOS Metal 4 remains opt-in; [the probe above](#offline-pipeline-archive-probe) records the build evidence and open device checks.
 General host changes first needed here; each applies to every game:
 
+- **Resolved: `Ver. ?` on the title screen of a build packed from an update-only NUP**: [A game packed from a NUP or a dump shows "Ver. ?" for a build its profile registers](../../../docs/reference/packing.md#a-game-packed-from-a-nup-or-a-dump-shows-ver--for-a-build-its-profile-registers). One Mac boot before and after.
 - **Resolved: Mac launcher metadata matches native defaults**: [A Mac front end's default settings change Metal execution paths](../../../docs/reference/packing.md#a-mac-front-ends-default-settings-change-metal-execution-paths), found by metadata generation and source inspection; no gameplay measurement.
 - [A capture refused after a change to the reflection structs](../../../docs/reference/nvn-objects.md#a-capture-refused-after-a-change-to-the-reflection-structs).
 - **zstd files inside a RomFS image** (`shader_split.py` `unzs`): [The zstd command given a path inside the image](../../../docs/reference/packing.md#the-zstd-command-given-a-path-inside-the-image).

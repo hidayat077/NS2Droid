@@ -902,15 +902,15 @@ def build_mismatch(d, name, g):   # the modules of an extraction whose build ID 
 def patch_files(repo, exe_dir, mods, game_id=None):
     """The patch files that name one of the modules' builds (dm/tools/sdk_patches.py, dm/games/*/patches.py): patch_nso.py loads them all but applies only those of a module's
     build ID. The selected game's file also counts for unknown builds: it may supply MATCH_CUTS. Another game's rules do not change this game's rewrite. sdk_patches.py always counts:
-    its MATCH_CUTS are SDK-wide and apply to builds it does not name. The patches.py of profiles in DM_GAMES_DIR (a provisional profile's) count too, as patch_nso.py loads them"""
+    its MATCH_CUTS are SDK-wide and apply to builds it does not name, as engine_patches.py's (engine-wide) do. The patches.py of profiles in DM_GAMES_DIR (a provisional profile's) count too, as patch_nso.py loads them"""
     ids = {build_id(exe_dir / m) for m in mods}
     selected = Path(game_id).name if game_id else None
     extra = [p for d in os.environ.get('DM_GAMES_DIR', '').split(os.pathsep) if d for p in sorted(Path(d).glob('*/patches.py'))]
-    sdk_wide = repo / 'dm/tools/sdk_patches.py'
+    shared = [repo / 'dm/tools/sdk_patches.py', repo / 'dm/tools/engine_patches.py']   # their MATCH_CUTS apply to every game's module of a kind
     files = {}
-    for p in [sdk_wide] + sorted((repo / 'dm/games').glob('*/patches.py')) + extra: files.setdefault(p.resolve(), p)
+    for p in shared + sorted((repo / 'dm/games').glob('*/patches.py')) + extra: files.setdefault(p.resolve(), p)
     return [p for p in files.values()
-            if p == sdk_wide or p.parent.name == selected or any(i in p.read_text(errors='replace') for i in ids)]
+            if p in shared or p.parent.name == selected or any(i in p.read_text(errors='replace') for i in ids)]
 
 
 def collect_nros(py, repo, romfs, dst, env, logs):

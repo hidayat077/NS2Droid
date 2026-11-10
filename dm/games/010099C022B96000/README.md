@@ -61,7 +61,7 @@ Update 1.3.1 (v327680) over the base game, SDK 18.3.5. The Wii game (codename Co
 
 ## Damaged NSP
 
-- The base game in hand was damaged: 12 MB runs of zeros near the end of its program (147 MB of damaged RomFS: the two WebM prologue movies, which the storybook prologue does not use), while its update was whole. It was packed with the damaged files kept as read.
+- The base NSP in hand was damaged: its program NCA hashed differently from its name, with 12 MB runs of zeros near its end (147 MB of damaged RomFS: the two WebM prologue movies, which the storybook prologue does not use), while its update and the small NCAs matched their names. It was packed with `--allow-damaged` ([01, NSP → NCA → ExeFS / RomFS](../../../docs/agents/01-extract.md#nsp--nca--exefs--romfs)).
 
 ## Mac routes
 
@@ -78,6 +78,7 @@ General host changes first needed here; each applies to every game:
 - **SDK 18's `InitializeTouchScreen(int, int)`** hooked: [SDK calls that open a system service through sm](../../../docs/reference/services.md#sdk-calls-that-open-a-system-service-through-sm).
 - **`op_mode`** (the operation mode at start, `DM_OPMODE`): [dm/games/README.md, Keys](../README.md#keys).
 - **Sampler LOD bias** given to Metal (NVN and Vulkan): [Sampler LOD bias](../../../docs/reference/rendering.md#sampler-lod-bias).
+- **The Vulkan `metallib` link passed `ARG_MAX`** with thousands of shaders under a long work folder: [The Vulkan shader step fails with `Argument list too long: 'xcrun'`](../../../docs/reference/packing.md#the-vulkan-shader-step-fails-with-argument-list-too-long-xcrun).
 - **Pro Controller motion absent from GameController on the Mac:** [Switch Pro Controller advertises motion but sends zeroes](../../../docs/reference/services.md#switch-pro-controller-advertises-motion-but-sends-zeroes).
 - **The phone's gyro turned a quarter turn on iPhone Duo's inner display** (GitHub issue #569; iOS 27's `deviceMotionBody`, device test open): [The phone's motion in the picture's frame](../../../docs/reference/services.md#the-phones-motion-in-the-pictures-frame).
 
