@@ -189,6 +189,15 @@ android {
     lint { abortOnError false; checkReleaseBuilds false }
 }
 
+// The log digest's tables (ExitWatch's notice, LogDigest.java): dm/tools/log_rules.tsv and log_noise.tsv, the files dm/tools/log_digest.py reads, copied at every build
+// into the APK's assets/digest/ (never a copy kept in the app's sources; test_android_logdigest.py checks)
+def nxDigest = tasks.register('nxDigestAssets', Sync) {
+    from(new File(repo, 'dm/tools')) { include 'log_rules.tsv', 'log_noise.tsv' }
+    into layout.buildDirectory.dir('generated/nxdigest/assets/digest')
+}
+android.sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/nxdigest/assets'))
+tasks.named('preBuild') { dependsOn nxDigest }
+
 // ./gradlew apk → out/ns2droid-android.apk (-PnxPlay=true: ns2droid-android-play.apk; -PnxApp=<suffix>: ns2droid-android-<suffix>.apk)
 tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'

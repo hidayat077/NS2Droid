@@ -164,6 +164,13 @@ Guest threads, their synchronization and how the host schedules them. Each entry
 - **Check:** during the bring-up the thread's ThreadLocalRegion showed +0x110 at 0 with +0x1F8 set; with the fix the allocator's first lock takes the fast path and the boot reaches `nnMain`.
 - **Found on:** [Well Dweller](../../dm/games/0100217023F6C000/README.md) (SDK 22.2.0). Any SDK 22+ game that locks a mutex before `nnMain` would hit this; a game whose mutexes are all taken by a thread that already owns them would not notice.
 
+### Unaligned atomic memory instructions on ARMv8.0-ARMv8.2 hosts (Android)
+
+- **Symptom:** `sig=7` (`SIGBUS`) with `code=1` (`BUS_ADRALN`) at an atomic memory instruction (`ldadd`, `cas`, `ldar`, `stlr`, `stxr`, etc.) on Snapdragon 870 / 888 or other ARMv8.0–ARMv8.2 cores; for example, `pc=main+0x104e4c` (`ldadd w9, w8, [x8]`) in *The Legend of Zelda: Ocarina of Time* (`0400486024DEC000`) with `addr=0x429e7ab5f1` (unaligned by 1 byte).
+- **Cause:** Switch 2 ("Ounce", Nvidia T239 Cortex-A78C) supports ARMv8.7-A and `FEAT_LSE2`. The Switch 2 kernel sets `SCTLR_EL1.nAA = 1`, permitting unaligned atomic and load-acquire/store-release instructions without alignment faults. Pre-v8.7 cores (such as Snapdragon 870 / Cortex-A77 or Snapdragon 888 / Cortex-X1) lack `FEAT_LSE2`; their hardware strictly requires natural 2-byte, 4-byte or 8-byte alignment for atomic instructions (`LDADD`, `CAS`, `SWP`, `LDAR`, etc.), raising `BUS_ADRALN` (`SIGBUS`).
+- **Fix:** on `SIGBUS`, `on_crash` in `dm/host/crash.c` reads the faulting instruction. If it is an unaligned LSE atomic memory operation (`LDADD`, `LDCLR`, `LDEOR`, `LDSET`, `LDSMAX`, `LDSMIN`, `LDUMAX`, `LDUMIN`, `SWP`, `LDAPR`), compare-and-swap (`CAS`), ordered load/store (`LDAR`, `STLR`) or exclusive load/store (`LDAXR`, `LDXR`, `STLXR`, `STXR`), it serializes the access under an atomic spinlock, executes the operation via safe byte-wise memory access, updates the destination register(s), and advances `pc += 4`.
+- **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md#found-on-this-game) (v131072) on the Realme RMX3371 (Snapdragon 870).
+
 ## Yields and spin waits
 
 The yield back-off (`DM_YIELD_BACKOFF`) and the rewriter's spin waits (`patch_nso.py` "Spin waits", `dm_spin_wait` in `hle_thread.c`), with their measurements, are in [development.md](../development.md#power) ("Yield loops", "Spin loops").
