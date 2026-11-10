@@ -141,6 +141,280 @@ int dm_host_has_pac(void) { static int v = -1; if (v < 0) v = (getauxval(AT_HWCA
 int dm_host_has_pac(void) { return 1; }   // the Apple builds keep what they did before
 #endif
 
+// Unaligned atomic memory instruction emulation for Armv8.0-Armv8.2 hosts.
+// Switch 2 ("Ounce") supports Armv8.7 FEAT_LSE2 (SCTLR_EL1.nAA = 1), permitting unaligned
+// atomic operations without alignment faults. Pre-v8.7 cores (Snapdragon 870/888) lack
+// FEAT_LSE2 and fault with BUS_ADRALN (SIGBUS). We emulate the atomic operation under a spinlock.
+static inline uint64_t reg_get_xn(ucontext_t *uc, unsigned r) {
+    if (r == 31) return (uint64_t)PLAT_UC_SP(uc);
+    if (r == 30) return (uint64_t)PLAT_UC_LR(uc);
+    if (r == 29) return (uint64_t)PLAT_UC_FP(uc);
+    return (uint64_t)PLAT_UC_X(uc, r);
+}
+
+static inline uint64_t reg_get_xt(ucontext_t *uc, unsigned r) {
+    if (r == 31) return 0;
+    if (r == 30) return (uint64_t)PLAT_UC_LR(uc);
+    if (r == 29) return (uint64_t)PLAT_UC_FP(uc);
+    return (uint64_t)PLAT_UC_X(uc, r);
+}
+
+static inline void reg_set_xt(ucontext_t *uc, unsigned r, uint64_t val, int is_32bit) {
+    if (r == 31) return;
+    if (is_32bit) val = (uint32_t)val;
+    if (r == 30) PLAT_UC_LR(uc) = val;
+    else if (r == 29) PLAT_UC_FP(uc) = val;
+    else PLAT_UC_X(uc, r) = val;
+}
+
+static _Atomic int g_unaligned_atomic_lock;
+static inline void unaligned_atomic_lock(void) {
+    while (atomic_exchange_explicit(&g_unaligned_atomic_lock, 1, memory_order_acquire)) {
+#if defined(__aarch64__)
+        __asm__ volatile("yield");
+#endif
+    }
+}
+static inline void unaligned_atomic_unlock(void) {
+    atomic_store_explicit(&g_unaligned_atomic_lock, 0, memory_order_release);
+}
+
+static int emulate_unaligned_atomic(void *fault_addr, ucontext_t *uc) {
+    uint32_t insn = 0;
+    if (plat_mem_read(PLAT_UC_PC(uc), &insn, sizeof insn)) return 0;
+
+    // 1. LSE Atomic memory operations: LDADD, LDCLR, LDEOR, LDSET, LDSMAX, LDSMIN, LDUMAX, LDUMIN, SWP, LDAPR
+    if ((insn & 0x3F200C00u) == 0x38200000u) {
+        unsigned sz = (insn >> 30) & 3;
+        unsigned rs = (insn >> 16) & 0x1F;
+        unsigned opc = (insn >> 12) & 0xF;
+        unsigned rn = (insn >> 5) & 0x1F;
+        unsigned rt = insn & 0x1F;
+
+        if (opc > 8 && opc != 12) return 0;
+
+        uint64_t addr = reg_get_xn(uc, rn);
+        uint64_t s = reg_get_xt(uc, rs);
+        uint64_t old_val = 0, new_val = 0;
+
+        unaligned_atomic_lock();
+        if (sz == 0) {
+            uint8_t m; memcpy(&m, (void *)addr, 1); old_val = m;
+        } else if (sz == 1) {
+            uint16_t m; memcpy(&m, (void *)addr, 2); old_val = m;
+        } else if (sz == 2) {
+            uint32_t m; memcpy(&m, (void *)addr, 4); old_val = m;
+        } else {
+            uint64_t m; memcpy(&m, (void *)addr, 8); old_val = m;
+        }
+
+        if (opc == 12) {
+            new_val = old_val;
+        } else {
+            switch (opc) {
+            case 0:
+                if (sz == 0) new_val = (uint8_t)(old_val + s);
+                else if (sz == 1) new_val = (uint16_t)(old_val + s);
+                else if (sz == 2) new_val = (uint32_t)(old_val + s);
+                else new_val = old_val + s;
+                break;
+            case 1:
+                if (sz == 0) new_val = (uint8_t)(old_val & ~(uint8_t)s);
+                else if (sz == 1) new_val = (uint16_t)(old_val & ~(uint16_t)s);
+                else if (sz == 2) new_val = (uint32_t)(old_val & ~(uint32_t)s);
+                else new_val = old_val & ~s;
+                break;
+            case 2:
+                if (sz == 0) new_val = (uint8_t)(old_val ^ (uint8_t)s);
+                else if (sz == 1) new_val = (uint16_t)(old_val ^ (uint16_t)s);
+                else if (sz == 2) new_val = (uint32_t)(old_val ^ (uint32_t)s);
+                else new_val = old_val ^ s;
+                break;
+            case 3:
+                if (sz == 0) new_val = (uint8_t)(old_val | (uint8_t)s);
+                else if (sz == 1) new_val = (uint16_t)(old_val | (uint16_t)s);
+                else if (sz == 2) new_val = (uint32_t)(old_val | (uint32_t)s);
+                else new_val = old_val | s;
+                break;
+            case 4:
+                if (sz == 0) { int8_t a = (int8_t)old_val, b = (int8_t)s; new_val = (uint8_t)(a > b ? a : b); }
+                else if (sz == 1) { int16_t a = (int16_t)old_val, b = (int16_t)s; new_val = (uint16_t)(a > b ? a : b); }
+                else if (sz == 2) { int32_t a = (int32_t)old_val, b = (int32_t)s; new_val = (uint32_t)(a > b ? a : b); }
+                else { int64_t a = (int64_t)old_val, b = (int64_t)s; new_val = (uint64_t)(a > b ? a : b); }
+                break;
+            case 5:
+                if (sz == 0) { int8_t a = (int8_t)old_val, b = (int8_t)s; new_val = (uint8_t)(a < b ? a : b); }
+                else if (sz == 1) { int16_t a = (int16_t)old_val, b = (int16_t)s; new_val = (uint16_t)(a < b ? a : b); }
+                else if (sz == 2) { int32_t a = (int32_t)old_val, b = (int32_t)s; new_val = (uint32_t)(a < b ? a : b); }
+                else { int64_t a = (int64_t)old_val, b = (int64_t)s; new_val = (uint64_t)(a < b ? a : b); }
+                break;
+            case 6:
+                if (sz == 0) { uint8_t a = (uint8_t)old_val, b = (uint8_t)s; new_val = a > b ? a : b; }
+                else if (sz == 1) { uint16_t a = (uint16_t)old_val, b = (uint16_t)s; new_val = a > b ? a : b; }
+                else if (sz == 2) { uint32_t a = (uint32_t)old_val, b = (uint32_t)s; new_val = a > b ? a : b; }
+                else { new_val = old_val > s ? old_val : s; }
+                break;
+            case 7:
+                if (sz == 0) { uint8_t a = (uint8_t)old_val, b = (uint8_t)s; new_val = a < b ? a : b; }
+                else if (sz == 1) { uint16_t a = (uint16_t)old_val, b = (uint16_t)s; new_val = a < b ? a : b; }
+                else if (sz == 2) { uint32_t a = (uint32_t)old_val, b = (uint32_t)s; new_val = a < b ? a : b; }
+                else { new_val = old_val < s ? old_val : s; }
+                break;
+            case 8:
+                if (sz == 0) new_val = (uint8_t)s;
+                else if (sz == 1) new_val = (uint16_t)s;
+                else if (sz == 2) new_val = (uint32_t)s;
+                else new_val = s;
+                break;
+            }
+
+            if (sz == 0) {
+                uint8_t m = (uint8_t)new_val; memcpy((void *)addr, &m, 1);
+            } else if (sz == 1) {
+                uint16_t m = (uint16_t)new_val; memcpy((void *)addr, &m, 2);
+            } else if (sz == 2) {
+                uint32_t m = (uint32_t)new_val; memcpy((void *)addr, &m, 4);
+            } else {
+                uint64_t m = new_val; memcpy((void *)addr, &m, 8);
+            }
+        }
+        unaligned_atomic_unlock();
+
+        reg_set_xt(uc, rt, old_val, sz < 3);
+        PLAT_UC_PC(uc) += 4;
+        static _Atomic int logged;
+        if (!atomic_exchange(&logged, 1)) {
+            fprintf(stderr, "[dm] unaligned atomic emulation active: pc=%#llx addr=%p insn=%#08x\n",
+                    (unsigned long long)PLAT_UC_PC(uc) - 4, fault_addr, insn);
+        }
+        return 1;
+    }
+
+    // 2. CAS: CAS, CASA, CASL, CASAL
+    if ((insn & 0x3FA07C00u) == 0x08A07C00u) {
+        unsigned sz = (insn >> 30) & 3;
+        unsigned rs = (insn >> 16) & 0x1F;
+        unsigned rn = (insn >> 5) & 0x1F;
+        unsigned rt = insn & 0x1F;
+        uint64_t addr = reg_get_xn(uc, rn);
+        uint64_t s = reg_get_xt(uc, rs);
+        uint64_t t = reg_get_xt(uc, rt);
+        uint64_t old_val = 0;
+
+        unaligned_atomic_lock();
+        if (sz == 0) {
+            uint8_t m; memcpy(&m, (void *)addr, 1); old_val = m;
+            if ((uint8_t)old_val == (uint8_t)s) { uint8_t nw = (uint8_t)t; memcpy((void *)addr, &nw, 1); }
+        } else if (sz == 1) {
+            uint16_t m; memcpy(&m, (void *)addr, 2); old_val = m;
+            if ((uint16_t)old_val == (uint16_t)s) { uint16_t nw = (uint16_t)t; memcpy((void *)addr, &nw, 2); }
+        } else if (sz == 2) {
+            uint32_t m; memcpy(&m, (void *)addr, 4); old_val = m;
+            if ((uint32_t)old_val == (uint32_t)s) { uint32_t nw = (uint32_t)t; memcpy((void *)addr, &nw, 4); }
+        } else {
+            uint64_t m; memcpy(&m, (void *)addr, 8); old_val = m;
+            if (old_val == s) { uint64_t nw = t; memcpy((void *)addr, &nw, 8); }
+        }
+        unaligned_atomic_unlock();
+
+        reg_set_xt(uc, rs, old_val, sz < 3);
+        PLAT_UC_PC(uc) += 4;
+        static _Atomic int logged;
+        if (!atomic_exchange(&logged, 1)) {
+            fprintf(stderr, "[dm] unaligned atomic emulation active: pc=%#llx addr=%p insn=%#08x\n",
+                    (unsigned long long)PLAT_UC_PC(uc) - 4, fault_addr, insn);
+        }
+        return 1;
+    }
+
+    // 3. Ordered load / store: LDAR, STLR
+    if ((insn & 0x3FBF7C00u) == 0x089F7C00u) {
+        int is_load = (insn >> 22) & 1;
+        unsigned sz = (insn >> 30) & 3;
+        unsigned rn = (insn >> 5) & 0x1F;
+        unsigned rt = insn & 0x1F;
+        uint64_t addr = reg_get_xn(uc, rn);
+
+        unaligned_atomic_lock();
+        if (is_load) {
+            uint64_t val = 0;
+            if (sz == 0) { uint8_t m; memcpy(&m, (void *)addr, 1); val = m; }
+            else if (sz == 1) { uint16_t m; memcpy(&m, (void *)addr, 2); val = m; }
+            else if (sz == 2) { uint32_t m; memcpy(&m, (void *)addr, 4); val = m; }
+            else { uint64_t m; memcpy(&m, (void *)addr, 8); val = m; }
+            unaligned_atomic_unlock();
+            reg_set_xt(uc, rt, val, sz < 3);
+        } else {
+            uint64_t val = reg_get_xt(uc, rt);
+            if (sz == 0) { uint8_t m = (uint8_t)val; memcpy((void *)addr, &m, 1); }
+            else if (sz == 1) { uint16_t m = (uint16_t)val; memcpy((void *)addr, &m, 2); }
+            else if (sz == 2) { uint32_t m = (uint32_t)val; memcpy((void *)addr, &m, 4); }
+            else { uint64_t m = val; memcpy((void *)addr, &m, 8); }
+            unaligned_atomic_unlock();
+        }
+        PLAT_UC_PC(uc) += 4;
+        static _Atomic int logged;
+        if (!atomic_exchange(&logged, 1)) {
+            fprintf(stderr, "[dm] unaligned atomic emulation active: pc=%#llx addr=%p insn=%#08x\n",
+                    (unsigned long long)PLAT_UC_PC(uc) - 4, fault_addr, insn);
+        }
+        return 1;
+    }
+
+    // 4. Exclusive load: LDAXR, LDXR
+    if ((insn & 0x3FFF7C00u) == 0x085F7C00u) {
+        unsigned sz = (insn >> 30) & 3;
+        unsigned rn = (insn >> 5) & 0x1F;
+        unsigned rt = insn & 0x1F;
+        uint64_t addr = reg_get_xn(uc, rn);
+        uint64_t val = 0;
+
+        unaligned_atomic_lock();
+        if (sz == 0) { uint8_t m; memcpy(&m, (void *)addr, 1); val = m; }
+        else if (sz == 1) { uint16_t m; memcpy(&m, (void *)addr, 2); val = m; }
+        else if (sz == 2) { uint32_t m; memcpy(&m, (void *)addr, 4); val = m; }
+        else { uint64_t m; memcpy(&m, (void *)addr, 8); val = m; }
+        unaligned_atomic_unlock();
+
+        reg_set_xt(uc, rt, val, sz < 3);
+        PLAT_UC_PC(uc) += 4;
+        static _Atomic int logged;
+        if (!atomic_exchange(&logged, 1)) {
+            fprintf(stderr, "[dm] unaligned atomic emulation active: pc=%#llx addr=%p insn=%#08x\n",
+                    (unsigned long long)PLAT_UC_PC(uc) - 4, fault_addr, insn);
+        }
+        return 1;
+    }
+
+    // 5. Exclusive store: STLXR, STXR
+    if ((insn & 0x3FE07C00u) == 0x08007C00u) {
+        unsigned sz = (insn >> 30) & 3;
+        unsigned rs = (insn >> 16) & 0x1F;
+        unsigned rn = (insn >> 5) & 0x1F;
+        unsigned rt = insn & 0x1F;
+        uint64_t addr = reg_get_xn(uc, rn);
+        uint64_t val = reg_get_xt(uc, rt);
+
+        unaligned_atomic_lock();
+        if (sz == 0) { uint8_t m = (uint8_t)val; memcpy((void *)addr, &m, 1); }
+        else if (sz == 1) { uint16_t m = (uint16_t)val; memcpy((void *)addr, &m, 2); }
+        else if (sz == 2) { uint32_t m = (uint32_t)val; memcpy((void *)addr, &m, 4); }
+        else { uint64_t m = val; memcpy((void *)addr, &m, 8); }
+        unaligned_atomic_unlock();
+
+        reg_set_xt(uc, rs, 0, 1);
+        PLAT_UC_PC(uc) += 4;
+        static _Atomic int logged;
+        if (!atomic_exchange(&logged, 1)) {
+            fprintf(stderr, "[dm] unaligned atomic emulation active: pc=%#llx addr=%p insn=%#08x\n",
+                    (unsigned long long)PLAT_UC_PC(uc) - 4, fault_addr, insn);
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
 static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
@@ -189,6 +463,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         int is_write = (int)((PLAT_UC_ESR(uc) >> 6) & 1);   // The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
+    if (sig == SIGBUS && emulate_unaligned_atomic(si->si_addr, uc)) return;
     crash_gate(sig);
     // The stderr lock may be held by another thread (stuck or suspended): the fprintf below would hang with it, the time limit's SIGALRM could not end the run, and the log would get nothing.
     // If it still cannot be taken after 1 s, write a single line with write() (pc / lr as module offsets) and exit. When this thread itself holds the lock, ftrylockfile still succeeds (file locks are recursive), unaffected

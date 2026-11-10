@@ -773,7 +773,7 @@ static uint64_t part_min(void) {
     static int64_t v = -1;
     if (v < 0) {
         const char *low = getenv("DM_LOW_MEM");
-        int64_t def = (low && strcmp(low, "0") != 0) ? 16 : 1024;
+        int64_t def = (low && strcmp(low, "0") != 0) ? 256 : 1024;
         v = (int64_t)VKA_ENV("DM_VK_PLACE_PART_MB", def) << 20;
         if (v < 0) v = 0;
         if (!v) VLOG("DM_VK_PLACE_PART_MB=0: every memory pool is placed whole");
