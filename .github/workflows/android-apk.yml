@@ -6,7 +6,7 @@ on:
       games:
         description: 'Games to build into the APK (comma-separated Title IDs)'
         required: false
-        default: '040074A01BF12000,0400A3A01EE4C000,0400C3F00006E000'
+        default: '040074A01BF12000,0400C3F00006E000,0400486024DEC000,0400A3A01EE4C000,0400380020056000'
       build_variant:
         description: 'Build variant: release (apk task), play (-PnxPlay=true), or debug'
         required: false
@@ -90,7 +90,7 @@ jobs:
       - name: Build APK
         working-directory: android/app
         run: |
-          GAMES="${{ github.event.inputs.games || '040074A01BF12000,0400A3A01EE4C000,0400C3F00006E000' }}"
+          GAMES="${{ github.event.inputs.games || '040074A01BF12000,0400C3F00006E000,0400486024DEC000,0400A3A01EE4C000,0400380020056000' }}"
           VARIANT="${{ github.event.inputs.build_variant || 'release' }}"
           echo "Building for games: $GAMES (variant: $VARIANT)"
           if [ "$VARIANT" = "play" ]; then
