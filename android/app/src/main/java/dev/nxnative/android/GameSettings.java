@@ -31,12 +31,17 @@ final class GameSettings {
         Profile prof = Profile.of(id);
         if (prof != null && prof.hasResolution())   // only where it does something: a profile with window_fn or graphics_scale rows
             Ui.add(box, new Ui.Setting(a, "🖼️", "Game resolution", v -> resolution(a, g, again)).value(windowLabel(a, id)).chevron(a).view, 8);
-        if (Prefs.ownRate(a, id)) {   // the host found no limiter it can hold for this game: choices would do nothing
+        if (!Prefs.limited(id) && Prefs.ownRate(a, id)) {   // the host found no limiter it can hold for this game: choices would do nothing (the host's frame limiter holds a limited game)
             Ui.Setting fixed = new Ui.Setting(a, "⏱️", "Frame rate cap", null).value("This game picks its own frame rate");
             fixed.view.setClickable(false);
             fixed.view.setAlpha(0.6f);
             Ui.add(box, fixed.view, 0);
         } else Ui.add(box, new Ui.Setting(a, "⏱️", "Frame rate cap", v -> cap(a, g, again)).value(capLabel(a, id)).chevron(a).view, 0);
+        if (Prefs.paced(id)) {   // the game's speed follows its measured frame rate (fps_decouple sead); off: as on the console. The in-game panel changes it live
+            Ui.Setting full = new Ui.Setting(a, "🏃", "Full game speed at low frame rates", null).toggle(a, Prefs.decouple(a, id), (b, on) -> Prefs.decouple(a, id, on));
+            full.value("The game keeps its normal speed when its frame rate drops or is limited. Off: it slows down with the frame rate, as on the console");
+            Ui.add(box, full.view, 0);
+        }
         Ui.add(box, new Ui.Setting(a, "📐", "Display", v -> display(a, g, again)).value(Prefs.DISPLAY_NAMES[Prefs.stretch(a, id) ? 1 : 0]).chevron(a).view, 0);
         Ui.add(box, new Ui.Setting(a, "🔍", "Upscaler", v -> upscaler(a, g, again)).value(dflt(GameUpscaler.ownMode(a, id), GameUpscaler.MODES[GameUpscaler.mode(a, id)])).chevron(a).view, 0);
         if (GameUpscaler.mode(a, id) == GameUpscaler.MODE_FSR)   // only with FSR 1 chosen
@@ -57,6 +62,10 @@ final class GameSettings {
         Ui.Setting pso = new Ui.Setting(a, "🧵", "Background pipelines", null).toggle(a, Prefs.psoAsync(a, id), (b, on) -> Prefs.psoAsync(a, id, on));
         pso.value("New pipelines are made in the background: a short pop-in instead of a stutter the first time something is drawn");
         Ui.add(box, pso.view, 0);
+        Ui.Setting ram = new Ui.Setting(a, "💾", "RAM saver (uses storage)", null).toggle(a, Prefs.ramSaver(a, id), (b, on) -> Prefs.ramSaver(a, id, on));
+        ram.value("Keeps the game's large texture data in a file instead of compressed RAM: more free RAM where the phone runs short, but each area load writes "
+                + "that data to storage (up to a few GB) and needs that much free space. Off: as before");
+        Ui.add(box, ram.view, 0);
         Ui.Setting ret = new Ui.Setting(a, "⏸️", "Pause on return", null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on));
         ret.value("Coming back from the background, the game waits paused for a tap");
         Ui.add(box, ret.view, 0);
@@ -82,7 +91,7 @@ final class GameSettings {
     }
 
     static String capLabel(MainActivity a, String id) {
-        String l = Prefs.paced(id) ? Prefs.paceLabel(Prefs.paceCap(a, id)) : MainActivity.capLabel(Prefs.fpsCap(a, id));
+        String l = Prefs.limited(id) ? Prefs.paceLabel(Prefs.paceCap(a, id)) : MainActivity.capLabel(Prefs.fpsCap(a, id));
         return Prefs.ownFpsCap(a, id) ? l : "Default · " + l;
     }
 
@@ -153,7 +162,7 @@ final class GameSettings {
     private static void resolution(MainActivity a, Game g, Runnable done) {
         String[] labels = new String[Prefs.WINDOWS.length + 1];
         labels[0] = "Default (" + Prefs.windowName(Prefs.defaultWindow(a, g.titleId), false) + ")";
-        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 1, Prefs.WINDOW_NAMES.length);
+        { Profile lp = Profile.of(g.titleId); for (int li = 0; li < Prefs.WINDOWS.length; li++) labels[li + 1] = lp != null ? lp.windowLabel(Prefs.WINDOWS[li], Prefs.WINDOW_NAMES[li]) : Prefs.WINDOW_NAMES[li]; }   // a choice the game draws at another size says so (Profile.windowLabel)
         int checked = Prefs.ownWindow(a, g.titleId) ? 1 + Math.max(0, Arrays.asList(Prefs.WINDOWS).indexOf(Prefs.gameWindow(a, g.titleId))) : 0;
         new AlertDialog.Builder(a).setTitle("Game resolution · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
             Prefs.gameWindow(a, g.titleId, w == 0 ? null : Prefs.WINDOWS[w - 1]);
@@ -184,9 +193,10 @@ final class GameSettings {
     }
 
     private static void cap(MainActivity a, Game g, Runnable done) {
-        if (Prefs.paced(g.titleId)) {   // a frame limit, no locking (Prefs.PACE_CAPS)
+        if (Prefs.limited(g.titleId)) {   // a frame limit, no locking (Prefs.PACE_CAPS)
             String[] labels = new String[Prefs.PACE_CAPS.length + 1];
-            labels[0] = "Default (Settings: " + Prefs.paceLabel(Prefs.paceOf(Prefs.fpsCap(a))) + ")";
+            int pl = Prefs.profileLimit(g.titleId);   // the profile's own default (fps_limit), else the main screen's
+            labels[0] = pl > 0 ? "Default (this game's: " + Prefs.paceLabel(Prefs.paceOf(pl)) + ")" : "Default (Settings: " + Prefs.paceLabel(Prefs.paceOf(Prefs.fpsCap(a))) + ")";
             int checked = 0, cur = Prefs.paceCap(a, g.titleId);
             for (int k = 0; k < Prefs.PACE_CAPS.length; k++) { labels[k + 1] = Prefs.paceLabel(Prefs.PACE_CAPS[k]); if (Prefs.ownFpsCap(a, g.titleId) && Prefs.PACE_CAPS[k] == cur) checked = k + 1; }
             new AlertDialog.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {

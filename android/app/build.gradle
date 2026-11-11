@@ -24,7 +24,7 @@ if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different
 def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
 def nxVersion = providers.gradleProperty('nxVersion').getOrElse('0.1-bringup')
-def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "NS2Droid $nxApp" : '')
+def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "Pitch $nxApp" : '')
 // The build tag the launcher shows over the game and in its main screen, and writes as the first line of each game log: branch@commit[+dirty] (no build time: the commit and the signer identify a build)
 def gitOut = { List<String> a -> try { providers.exec { commandLine(['git'] + a); ignoreExitValue = true }.standardOutput.asText.get().trim() } catch (Exception e) { '' } }
 def commit = gitOut(['rev-parse', '--short=12', 'HEAD'])
@@ -97,7 +97,10 @@ def windowOf = { String game -> tsvRows(game, 'android_window').with { rs -> rs.
 def decoupleOf = { String game -> tsvRows(game, 'fps_decouple').isEmpty() ? '' : '1' }
 // Whether the host can steer the game's dynamic resolution (game.tsv drs_ctl rows): "1", or empty. The launcher then offers its Dynamic resolution setting (Prefs.drsGame)
 def drsOf = { String game -> tsvRows(game, 'drs_ctl').isEmpty() ? '' : '1' }
-def nxProfiles = nxGames.collect { g -> [g, nameOf(g).replaceAll(/[\t\n\\"]/, ' '), shaderTotalOf(g), shaderInputsOf(g), buildsOf(g), reqsOf(g), statusOf(g), deltaOf(g), stampOf(g), resolutionOf(g), romfsChecksOf(g), gpuTsOf(g), windowOf(g), decoupleOf(g), drsOf(g)].join('\\t') }.join('\\n')
+// The profile's default frame limit (game.tsv fps_limit: frames a second, the host's limiter, hle_fpslock.c), or empty without one (0 = none). The launcher then offers a frame limit
+// as for a paced game, the profile's limit its default (Prefs.limited)
+def fpsLimitOf = { String game -> tsvRows(game, 'fps_limit').with { rs -> rs.isEmpty() || rs[0].size() < 2 || rs[0][1].trim() == '0' ? '' : rs[0][1].trim() } }
+def nxProfiles = nxGames.collect { g -> [g, nameOf(g).replaceAll(/[\t\n\\"]/, ' '), shaderTotalOf(g), shaderInputsOf(g), buildsOf(g), reqsOf(g), statusOf(g), deltaOf(g), stampOf(g), resolutionOf(g), romfsChecksOf(g), gpuTsOf(g), windowOf(g), decoupleOf(g), drsOf(g), fpsLimitOf(g)].join('\\t') }.join('\\n')
 def lockOf = { String key -> def f = new File(repo, 'dm/gfx/tools/dmsh_chain.lock'); f.isFile() ? (f.readLines().find { it.startsWith(key + '\t') }?.split('\t')?.getAt(1) ?: 'unknown') : 'unknown' }
 
 android {
@@ -106,8 +109,8 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId nxLive ? 'dev.ns2droid.android' : nxPlay ? 'dev.ns2droid.android.play' : nxApp ? "dev.ns2droid.android.$nxApp" : 'dev.ns2droid.android'
-        resValue 'string', 'app_name', nxPlay || nxLive ? 'NS2Droid' : nxApp ? nxLabel : 'NS2Droid'
+        applicationId nxLive ? 'dev.pitch.android' : nxPlay ? 'dev.pitch.android.play' : nxApp ? "dev.pitch.android.$nxApp" : 'dev.pitch.android'
+        resValue 'string', 'app_name', nxPlay || nxLive ? 'Pitch' : nxApp ? nxLabel : 'Pitch'
         minSdk 33
         targetSdk 35
         versionCode nxVersionCode
@@ -151,10 +154,14 @@ android {
         main {
             res.srcDirs += nxPlay || nxLive ? 'src/variant-play/res' : 'src/variant-test/res'
             java.srcDirs += 'src/ondevice/java'
+            assets.srcDirs += 'src/main/assets'
         }
         // The service and its permissions, merged over the main manifest (a build type's manifest is an overlay)
         release { manifest.srcFile 'src/ondevice/AndroidManifest.xml' }
         debug { manifest.srcFile 'src/ondevice/AndroidManifest.xml' }
+    }
+    androidResources {
+        noCompress 'zip'
     }
     signingConfigs {
         if (nxLive) live { storeFile file(signStore); storePassword signPass; keyAlias signAlias; keyPassword signPass }
@@ -198,12 +205,12 @@ def nxDigest = tasks.register('nxDigestAssets', Sync) {
 android.sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/nxdigest/assets'))
 tasks.named('preBuild') { dependsOn nxDigest }
 
-// ./gradlew apk → out/ns2droid-android.apk (-PnxPlay=true: ns2droid-android-play.apk; -PnxApp=<suffix>: ns2droid-android-<suffix>.apk)
+// ./gradlew apk → out/pitch-android.apk (-PnxPlay=true: pitch-android-play.apk; -PnxApp=<suffix>: pitch-android-<suffix>.apk)
 tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'
     from(layout.buildDirectory.dir('outputs/apk/release')) { include '*.apk' }
     into layout.projectDirectory.dir('out')
-    rename { nxLive ? "ns2droid-${nxVersion}.apk" : nxPlay ? 'ns2droid-android-play.apk' : nxApp ? "ns2droid-android-${nxApp}.apk" : 'ns2droid-android.apk' }
+    rename { nxLive ? "pitch-${nxVersion}.apk" : nxPlay ? 'pitch-android-play.apk' : nxApp ? "pitch-android-${nxApp}.apk" : 'pitch-android.apk' }
 }
 
 // The on-device packer's native side (android/ONDEVICE.md "In the APK"; not with -PnxPackEngine=fake). android/ondevice/build.sh makes its stage on the Mac;
@@ -222,7 +229,22 @@ if (nxPackEngine == 'native') {
     def nxPack = layout.buildDirectory.dir('nxpack')
     def need = ['lib/libpython3.14.so', 'lib/libnxpack.so', 'lib/libzbicdec.so', 'lib/libdmsh_xlate.so', 'lib/libSPIRV-Tools-shared.so', 'python/lib/python3.14/os.py']
     need.each { if (!new File(stage, it).isFile()) throw new GradleException("$stage has no $it: run android/ondevice/build.sh <work dir> (it makes <work dir>/stage)") }
+    // The stage's translator must be built from this tree: vk_android_build.py check_translator refuses any other on the phone, so an APK with a stale one fails
+    // every Prepare at the shaders step (2026-11-10: a stage made before a translator change). xlate_tree.py --check-lib reads the digests the library embeds
+    // (it is arm64 Android code: it does not run here); it runs at every build, as the stage can be rebuilt between two builds
+    def xlateCheck = tasks.register('nxPackXlateCheck') {
+        def lib = new File(stage, 'lib/libdmsh_xlate.so'), tool = new File(repo, 'dm/gfx/tools/xlate_tree.py')
+        doLast {
+            def p
+            try { p = new ProcessBuilder('python3', tool.path, '--check-lib', lib.path).redirectErrorStream(true).start() }
+            catch (IOException e) { throw new GradleException("python3 is needed to check $lib against this tree (dm/gfx/tools/xlate_tree.py --check-lib): $e.message") }
+            def out = p.inputStream.text.trim()
+            if (p.waitFor() != 0) throw new GradleException("The stage's translator was not built from this tree; the APK would fail every Prepare at the shaders step:\n$out")
+            logger.lifecycle(out)
+        }
+    }
     def jni = tasks.register('nxPackJni', Sync) {
+        dependsOn xlateCheck
         from(new File(stage, 'lib')) { include 'libpython3.14.so', 'libnxpack.so', 'libzbicdec.so', 'libdmsh_xlate.so', 'libSPIRV-Tools-shared.so' }
         into nxPack.map { it.dir('jni/arm64-v8a') }
     }

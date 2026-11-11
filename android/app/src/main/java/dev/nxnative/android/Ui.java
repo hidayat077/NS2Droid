@@ -290,6 +290,9 @@ final class Ui {
      * Returns the column to fill.
      */
     static LinearLayout page(Activity a, FrameLayout frame, int maxWidthDp) {
+        // Edge to edge on every Android: from Android 15 targetSdk 35 makes it so, but before it the window keeps its content clear of the bars itself and
+        // consumes the insets, so the listener below never ran and the column had no gutter and no width limit (cards from edge to edge on Android 13)
+        a.getWindow().setDecorFitsSystemWindows(false);
         View scrim = new View(a);
         scrim.setBackgroundColor((col(a, R.color.bn_bg) & 0x00FFFFFF) | 0xEE000000);
         ScrollView scroll = new ScrollView(a);
@@ -473,13 +476,13 @@ final class Ui {
         return r;
     }
 
-    /** The banana with a face in a leaf-green circle (Home's header) */
+    /** The Pitch logo in a deep purple circle (Home's header) */
     static ImageView badge(Context c, int sizeDp) {
         ImageView v = new ImageView(c);
-        v.setImageDrawable(new android.graphics.drawable.InsetDrawable(c.getDrawable(R.drawable.ic_banana_happy), -0.16f));   // the banana fills more of the circle
+        v.setImageDrawable(c.getDrawable(R.drawable.ic_banana_happy));
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
-        g.setColor(0xFF1E5B3A);
+        g.setColor(0xFF24193F);
         v.setBackground(g);
         v.setScaleType(ImageView.ScaleType.FIT_CENTER);
         v.setLayoutParams(new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp)));

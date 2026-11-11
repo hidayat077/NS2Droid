@@ -33,10 +33,46 @@ import java.util.Locale;
 final class GpuDriver {
     private GpuDriver() {}
 
-    /** The driver the picker marks " (recommended)": an installed one whose meta.json name starts with this; empty = none marked. Empty on purpose: on the PNM-N49 System
-     *  stays fastest (44 fps vs 20-22 on Turnip, android/README.md "Custom GPU drivers"); the best Turnip measured is T30 (Mr_Purple, PurpleVK 26.3) */
-    static final String RECOMMENDED_NAME_PREFIX = "";
+    /** The driver the picker marks " (recommended)": an installed one whose meta.json name starts with this.
+     *  TurnipZ 0.3.0 (Vulkan 1.4) is bundled in assets and set as the default recommended driver. */
+    static final String RECOMMENDED_NAME_PREFIX = "TurnipZ";
     static boolean recommended(Info i) { return !RECOMMENDED_NAME_PREFIX.isEmpty() && i.name.startsWith(RECOMMENDED_NAME_PREFIX); }
+
+    static final String BUNDLED_DRIVER_ASSET = "bundled_driver/TurnipZ-0.3.0-Vulkan1.4.zip";
+    static final String BUNDLED_VERSION = "TurnipZ-0.3.0-V1.4";
+    private static volatile boolean sBundledChecked = false;
+
+    /** Unpacks the bundled GPU driver from assets on first run or when updated. */
+    static synchronized void ensureBundledDriver(Context c) {
+        if (sBundledChecked) return;
+        String curVer = Prefs.of(c).getString("bundled_driver_version", null);
+        if (BUNDLED_VERSION.equals(curVer)) {
+            sBundledChecked = true;
+            return;
+        }
+        try {
+            try (InputStream in = c.getAssets().open(BUNDLED_DRIVER_ASSET)) {
+                Info i = install(c, in, "TurnipZ 0.3.0");
+                Prefs.of(c).edit().putString("bundled_driver_version", BUNDLED_VERSION).commit();
+                String curPick = Prefs.of(c).getString("gpu_driver", null);
+                if (curPick == null || curPick.isEmpty()) {
+                    select(c, i);
+                }
+            }
+        } catch (IOException ignored) {
+            // Asset not present or install failed; don't block
+        }
+        sBundledChecked = true;
+    }
+
+    /** Installs or reinstalls the bundled TurnipZ driver from assets */
+    static Info installBundled(Context c) throws IOException {
+        try (InputStream in = c.getAssets().open(BUNDLED_DRIVER_ASSET)) {
+            Info i = install(c, in, "TurnipZ 0.3.0");
+            Prefs.of(c).edit().putString("bundled_driver_version", BUNDLED_VERSION).commit();
+            return i;
+        }
+    }
 
     static final class Info {
         final File dir; final String name, version, vendor, library;
@@ -64,13 +100,18 @@ final class GpuDriver {
 
     /** The picked driver, null = the system's (also when the picked one was removed) */
     static Info selected(Context c) {
-        String s = Prefs.of(c).getString("gpu_driver", "");
-        if (s.isEmpty()) return null;
-        for (Info i : installed(c)) if (i.dir.getName().equals(s)) return i;
-        return null;
+        ensureBundledDriver(c);
+        String s = Prefs.of(c).getString("gpu_driver", null);
+        if (SYSTEM.equals(s)) return null;
+        if (s != null && !s.isEmpty()) {
+            for (Info i : installed(c)) if (i.dir.getName().equals(s)) return i;
+        }
+        for (Info i : installed(c)) if (recommended(i)) return i;
+        List<Info> inst = installed(c);
+        return inst.isEmpty() ? null : inst.get(0);
     }
 
-    static void select(Context c, Info i) { Prefs.of(c).edit().putString("gpu_driver", i == null ? "" : i.dir.getName()).commit(); }   // commit: the game runs in its own process (:game), which reads the file at start
+    static void select(Context c, Info i) { Prefs.of(c).edit().putString("gpu_driver", i == null ? SYSTEM : i.dir.getName()).commit(); }   // commit: the game runs in its own process (:game), which reads the file at start
 
     /** A game's own pick (its Game settings), stored per title ID: absent = the default above, SYSTEM = the phone's own driver, else a driver's folder name
      *  (":" is never in one, DriverZip.safe()) */
@@ -196,6 +237,7 @@ final class GpuDriver {
 
     /** The main screen's "GPU driver…" dialog: System or an installed driver; install from a zip in the app's own folder, picked or downloaded (request = the picker's request code) */
     static void dialog(Activity a, int request) {
+        ensureBundledDriver(a);
         List<Info> inst = installed(a);
         Info sel = selected(a);
         List<String> labels = new ArrayList<>();
@@ -219,18 +261,31 @@ final class GpuDriver {
     private static void installDialog(Activity a, int request) {
         List<File> zips = found(a);   // names only, in the app's own folder
         List<String> labels = new ArrayList<>();
+        boolean hasBundled = false;
+        for (Info i : installed(a)) if (recommended(i)) { hasBundled = true; break; }
+        if (!hasBundled) labels.add("Reinstall bundled TurnipZ 0.3.0…");
         for (File f : zips) labels.add(f.getName() + "  (the app's gpu_drivers folder)");
         labels.add("Pick a zip…");
         labels.add("Download…");   // DriverFetch: GitHub releases, only on a tap
+        final boolean showReinstall = !hasBundled;
         new AlertDialog.Builder(a).setTitle("Install a driver zip (with meta.json)")
                 .setItems(labels.toArray(new String[0]), (d, w) -> {
-                    if (w == zips.size() + 1) { DriverFetch.dialog(a, request); return; }
-                    if (w == zips.size()) {
+                    int offset = 0;
+                    if (showReinstall) {
+                        if (w == 0) {
+                            installInBackground(a, "bundled TurnipZ", () -> installBundled(a), null);
+                            return;
+                        }
+                        offset = 1;
+                    }
+                    int item = w - offset;
+                    if (item == zips.size() + 1) { DriverFetch.dialog(a, request); return; }
+                    if (item == zips.size()) {
                         a.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")   // some providers label zips otherwise
                                 .putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"application/zip", "application/x-zip-compressed", "application/octet-stream"}), request);
                         return;
                     }
-                    File z = zips.get(w);
+                    File z = zips.get(item);
                     installInBackground(a, z.getName(), () -> install(a, z), null);
                 }).setNegativeButton("Cancel", null).show();
     }

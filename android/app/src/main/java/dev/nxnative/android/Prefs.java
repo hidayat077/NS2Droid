@@ -88,18 +88,38 @@ final class Prefs {
     /** The in-game panel's own size and text size (PanelLook: 0 Small, 1 Normal, 2 Large), for every game */
     static int panelSize(Context c) { return PanelLook.of(of(c).getInt("panel_size", PanelLook.NORMAL)); }
     static void panelSize(Context c, int v) { of(c).edit().putInt("panel_size", PanelLook.of(v)).commit(); }
+    /** Settings › Controller: in-game panel (PadPanel.OPEN_*): how a controller opens and closes the in-game panel, for every game; Home, or − and + held, by default */
+    static int panelPad(Context c) { return PadPanel.open(of(c).getInt("panel_pad", PadPanel.OPEN_BOTH)); }
+    static void panelPad(Context c, int v) { of(c).edit().putInt("panel_pad", PadPanel.open(v)).commit(); }
+    /** The one-time hint over the game that says how the panel opens (GameActivity.panelHint), once it has been shown */
+    static boolean panelHinted(Context c) { return of(c).getBoolean("panel_hint", false); }
+    static void panelHinted(Context c, boolean v) { of(c).edit().putBoolean("panel_hint", v).commit(); }
     static int panelText(Context c) { return PanelLook.of(of(c).getInt("panel_text", PanelLook.NORMAL)); }
     static void panelText(Context c, int v) { of(c).edit().putInt("panel_text", PanelLook.of(v)).commit(); }
-    /** Games whose speed follows the measured frame rate (their profile has fps_decouple rows: the host's sead_decouple) get a frame limit instead of 60 / 30 / 20 locking.
+    /** Games whose speed follows the measured frame rate (their profile has fps_decouple sead: the host's sead_rate) get a frame limit instead of 60 / 30 / 20 locking.
      *  The limit is one of PACE_CAPS: 0 = 60 fps (the game's fastest rate, where the measured rate is clamped), or at most that many frames a second (paceOf) */
-    static final int[] PACE_CAPS = {0, 45, 40, 30};
+    static final int[] PACE_CAPS = {0, 45, 40, 30, 20};   // saved as the rate itself (fps_cap), not an index: 20 was added last, the others keep their meaning
     static boolean paced(String titleId) { Profile p = Profile.of(titleId); return p != null && p.decoupled; }
-    static int paceOf(int v) { return v <= 0 || v >= 60 ? 0 : v >= 45 ? 45 : v >= 40 ? 40 : 30; }
+    /** Games the host's frame limiter caps (hle_fpslock.c fps_limit_wait, DM_FPS_LIMIT): the paced ones, and those whose profile sets a default limit (game.tsv fps_limit, a game
+     *  with no limiter of its own the host can write). Both get a frame limit (PACE_CAPS) in place of 60 / 30 / 20 locking */
+    /** Full game speed at low frame rates (per game, default on), for paced games: sead's controller hands the game the measured frame rate (hle_fpslock.c sead_rate).
+     *  Off: the game's own 60 / interval, as on the console (DM_FPS_DECOUPLE=0 at start, Native.decoupleSet while it runs). Game settings and the in-game panel share it */
+    static boolean decouple(Context c, String titleId) { return of(c).getBoolean(gameKey("decouple", titleId), true); }
+    static void decouple(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("decouple", titleId), on).commit(); }
+    static boolean limited(String titleId) { Profile p = Profile.of(titleId); return p != null && (p.decoupled || p.fpsLimit > 0); }
+    /** The profile's default frame limit (game.tsv fps_limit), 0 without one */
+    static int profileLimit(String titleId) { Profile p = Profile.of(titleId); return p == null ? 0 : p.fpsLimit; }
+    /** A saved cap as one of PACE_CAPS: the highest at or below it, 20 below that (the main screen's 15 for the other games). Since 20 was added a saved 20 or 15 (only the main
+     *  screen's default can be one) is 20 fps here, where it was 30 */
+    static int paceOf(int v) { return v <= 0 || v >= 60 ? 0 : v >= 45 ? 45 : v >= 40 ? 40 : v >= 30 ? 30 : 20; }
     static String paceLabel(int v) { return (v <= 0 ? 60 : v) + " fps"; }   // 0 is 60: the game's own fastest rate, where the decoupling's rate is clamped
-    /** A paced game's cap as saved, without capOf (which turns 45 and 40 into 30 for the other games): its own, else the default, as one of PACE_CAPS */
-    static int paceCap(Context c, String titleId) { return paceOf(of(c).getInt(gameKey("fps_cap", titleId), of(c).getInt("fps_cap", -1))); }
+    /** A limited game's cap as saved, without capOf (which turns 45 and 40 into 30 for the other games): its own, else its profile's fps_limit, else the main screen's default, as one of PACE_CAPS */
+    static int paceCap(Context c, String titleId) {
+        int pl = profileLimit(titleId);
+        return paceOf(of(c).getInt(gameKey("fps_cap", titleId), pl > 0 ? pl : of(c).getInt("fps_cap", -1)));
+    }
     /** Game settings › Reset to defaults: every choice of the game's own back to the main screen's default (Extra environment's lines stay) */
-    static final String[] GAME_SETTINGS = {"window", "fps_cap", "gpu_driver", "gpu_ts", "pause_return", "ndsr_choice2", "ndsr_sharp", "drs2"};
+    static final String[] GAME_SETTINGS = {"window", "fps_cap", "gpu_driver", "gpu_ts", "pause_return", "ndsr_choice2", "ndsr_sharp", "drs2", "ram_saver", "decouple"};
     static void resetGame(Context c, String titleId) {
         SharedPreferences.Editor e = of(c).edit();
         for (String k : GAME_SETTINGS) e.remove(gameKey(k, titleId));
@@ -197,6 +217,13 @@ final class Prefs {
      *  so a cold cache gives a short pop-in instead of a freeze (Bananza's heaviest area with an empty cache: worst frame 8.1 s → 3.7 s). On by default */
     static boolean psoAsync(Context c, String titleId) { return of(c).getBoolean(gameKey("vk_pso_async", titleId), true); }
     static void psoAsync(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("vk_pso_async", titleId), on).commit(); }
+    /**
+     * RAM saver (per game, off by default; from Anka Native, NOTICE.md): DM_MEM_FILEBACK=1 with DM_MEM_FILEBACK_KINDS=shader,texture for the host (shader-code pools are
+     * file-backed for every game by default; this adds the texture kind), so the game's large write-once texture pools live in a file in the app's cache folder instead of anonymous memory: clean file pages the kernel drops instead of compressing them into
+     * zram. For phones short of RAM with free storage; it writes the pools' data to storage at each area load. Lines in env.txt or the game's own lines win
+     */
+    static boolean ramSaver(Context c, String titleId) { return of(c).getBoolean(gameKey("ram_saver", titleId), false); }
+    static void ramSaver(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("ram_saver", titleId), on).commit(); }
     /** Game settings › Classic render passes (DM_VK_CLASSIC_RP): VkRenderPasses with imageless framebuffers instead of dynamic rendering. Off by default (a GPU loss on Adreno 830 with Turnip, open) */
     static boolean classicPasses(Context c, String titleId) { return of(c).getBoolean(gameKey("vk_classic_rp", titleId), false); }
     static void classicPasses(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("vk_classic_rp", titleId), on).commit(); }
@@ -209,6 +236,11 @@ final class Prefs {
     /** GPU timing (Game settings): "segment" or "submission" passed to the host as DM_NVN_GPU_TS, null for the game's default (its profile's gpu_timestamps) */
     static String gpuTs(Context c, String titleId) { return of(c).getString(gameKey("gpu_ts", titleId), null); }
     static void gpuTs(Context c, String titleId, String mode) { put(c, gameKey("gpu_ts", titleId), mode); }
+
+    /** Whether the launcher takes the adb control commands of the intents that start it (AdbControl: add a game, start Prepare, install or pick a GPU driver, export or
+     *  import a pack; android/TESTING.md): a test build always; a play or release build only while Settings › Help › ADB control (debug) is on, off by default */
+    static boolean adbControl(Context c) { return AdbControl.allowed(BuildConfig.NX_PLAY, of(c).getBoolean("adb_control", false)); }
+    static void adbControl(Context c, boolean on) { of(c).edit().putBoolean("adb_control", on).commit(); }
 
     /** Keep the screen on while a game is prepared (Settings › System, on by default): Home keeps it on while the job runs and its card shows (Ondevice) */
     static boolean keepScreenPreparing(Context c) { return of(c).getBoolean("keep_screen_preparing", true); }

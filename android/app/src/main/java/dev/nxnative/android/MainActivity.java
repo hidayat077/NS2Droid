@@ -62,8 +62,9 @@ public final class MainActivity extends Activity {
         bananas = new BananaBackgroundView(this);
         frame.addView(bananas, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(frame);
+        GpuDriver.ensureBundledDriver(this);
         build();
-        if (saved == null) fromIntent(getIntent());
+        if (saved == null) { setIntent(gated(getIntent())); fromIntent(getIntent()); }   // start() reads no_pause from getIntent() too
         Updater.onStart(this);   // the release app: a newer release on GitHub opens the update popup (once per process start: not on a resume or a rotation)
     }
 
@@ -105,7 +106,7 @@ public final class MainActivity extends Activity {
 
     private void buildHome(LinearLayout content) {
         overlayRow = null;
-        content.addView(Ui.header(this, Ui.badge(this, 44), "NS2Droid", Prefs.buildId(), Ui.iconButton(this, R.drawable.ic_settings, "Settings", Ui.Kind.TONAL, v -> page(true))));   // the build identifier under the title (Prefs.buildId, the part of the overlay's build tag after the app's name), so a screenshot of Home names its build; Settings › About has the full tag
+        content.addView(Ui.header(this, Ui.badge(this, 44), "Pitch", Prefs.buildId(), Ui.iconButton(this, R.drawable.ic_settings, "Settings", Ui.Kind.TONAL, v -> page(true))));   // the build identifier under the title (Prefs.buildId, the part of the overlay's build tag after the app's name), so a screenshot of Home names its build; Settings › About has the full tag
         accessCard = accessCard();
         Ui.add(content, accessCard, 16);
         Ondevice.attach(this, content, content.getChildCount());   // a game being prepared and its progress (hidden when there is none)
@@ -158,6 +159,15 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show());
         touch.value(touchLabel(TouchControls.mode(this)));
         play.addView(touch.view);
+        play.addView(new Ui.Setting(this, "🔘", "Show / hide button", null).toggle(this, TouchControls.toggleButton(this), (b, on) -> TouchControls.toggleButton(this, on))
+                .value("The small button at the top centre that hides the on-screen controls").view);
+        // How a controller opens the in-game panel (PadPanel); the panel opens by touch with a swipe in from the right edge or Back
+        Ui.Setting padPanel = new Ui.Setting(this, "🎛️", "Controller: in-game panel", null).chevron(this);
+        padPanel.view.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Open the in-game panel with a controller")
+                .setSingleChoiceItems(PadPanel.OPEN_NAMES, Prefs.panelPad(this), (d, w) -> { Prefs.panelPad(this, w); padPanel.value(padPanelLabel(w)); d.dismiss(); })
+                .setNegativeButton("Cancel", null).show());
+        padPanel.value(padPanelLabel(Prefs.panelPad(this)));
+        play.addView(padPanel.view);
         resRow = new Ui.Setting(this, "🖼️", "Resolution", v -> gameRes()).chevron(this);
         play.addView(resRow.view);
         if (!Profile.anyResolution()) resRow.view.setVisibility(View.GONE);   // no game of this APK has a window_fn or graphics_scale lever: the default would do nothing
@@ -196,6 +206,7 @@ public final class MainActivity extends Activity {
         gpuRow = new Ui.Setting(this, "🎮", "GPU driver", v -> GpuDriver.dialog(this, PICK_DRIVER)).chevron(this);   // custom GPU drivers (GpuDriver.java)
         sys.addView(gpuRow.view);
         sys.addView(new Ui.Setting(this, "📁", "Folders", v -> Folders.dialog(this)).value("Game, pack and save folders").chevron(this).view);
+        sys.addView(new Ui.Setting(this, "🧹", "Storage", v -> StorageUi.dialog(this)).value("Remove leftovers and old files; never saves").chevron(this).view);   // (StorageUi.java)
         // some phones stop or slow a background job once the screen is off (GitHub discussion 58): Home keeps the screen on while preparing (Ondevice), the service its wake lock
         sys.addView(new Ui.Setting(this, "🔆", "Keep the screen on while preparing", null).toggle(this, Prefs.keepScreenPreparing(this), (b, on) -> Prefs.keepScreenPreparing(this, on))
                 .value("While Home shows a game being prepared").view);   // the game, pack and save folders, kept across updates (Folders.java)
@@ -206,6 +217,19 @@ public final class MainActivity extends Activity {
                 .value("Can this phone run your games?").chevron(this).view);   // (ReadinessActivity.java)
         help.addView(new Ui.Setting(this, "🧪", "Graphics self-test", v -> startActivity(new Intent(this, SelftestActivity.class))).value("Needs no game").chevron(this).view);
         help.addView(new Ui.Setting(this, "📨", "Share log", v -> shareLog()).value("The newest log").chevron(this).view);
+        if (BuildConfig.NX_PLAY) {   // a test build always takes adb's commands (Prefs.adbControl)
+            Ui.Setting adb = new Ui.Setting(this, "🛠", "ADB control (debug)", null)
+                    .value("Lets adb commands add games, start Prepare and install GPU drivers. Off: only you, in the app");
+            adb.toggle(this, Prefs.adbControl(this), (b, on) -> {
+                if (on == Prefs.adbControl(this)) return;   // the switch set back to what is stored (below): nothing to do
+                if (!on) { Prefs.adbControl(this, false); return; }
+                b.setChecked(false);   // stays off until confirmed
+                Ui.confirmDanger(this, "Turn ADB control on?", "While it is on, adb, and any other app on this phone, can add games, start Prepare and install or pick a GPU "
+                        + "driver through Pitch's launcher, without asking you. A GPU driver is code that runs inside the game. Turn it on only while you use adb, then off again.",
+                        "Turn on", () -> { Prefs.adbControl(this, true); b.setChecked(true); });
+            });
+            help.addView(adb.view);
+        }
 
         Ui.add(content, Ui.section(this, "About"), Ui.SECTION_GAP);
         LinearLayout about = Ui.add(content, Ui.card(this), 8);
@@ -226,7 +250,7 @@ public final class MainActivity extends Activity {
     /** The settings rows' current values (after a dialog, on resume) */
     private void refreshSettings() {
         if (overlayRow == null) return;
-        updateRow.value("NS2Droid " + Updater.version(this) + (Updater.available(this) ? "" : " · release app only"));
+        updateRow.value("Pitch " + Updater.version(this) + (Updater.available(this) ? "" : " · release app only"));
         boolean ov = Prefs.overlay(this);
         if (overlayRow.toggle.isChecked() != ov) overlayRow.toggle.setChecked(ov);
         int n = 0;
@@ -256,6 +280,7 @@ public final class MainActivity extends Activity {
     /** adb: am start -n dev.nxnative.android/.MainActivity --es game <game folder> [--es pack <pack folder>] [--es save <save folder>] [--ez run true] adds the game without
      *  the pickers (android/TESTING.md); --es add_game <folder or .nup> takes Add game's own path instead (gamePicked: all of a folder's games added, Prepare asked); save is the save folder Folders would pick for it (test runs of a play or release app keep away from the user's saves/<id>) */
     private void fromIntent(Intent i) {
+        i = gated(i);
         if (settingsPage && (i.hasExtra("game") || i.hasExtra("add_game") || i.hasExtra("ondevice_dump") || i.hasExtra("ondevice_pause"))) page(false);   // these act on Home's cards
         Ondevice.fromIntent(this, i);   // --es ondevice_dump <dump folder> [--ez ondevice_start true] (Ondevice)
         GpuDriver.fromIntent(this, i);   // --es gpu_driver_zip <zip> / --es gpu_driver <name | system>
@@ -276,6 +301,19 @@ public final class MainActivity extends Activity {
         String save = i.getStringExtra("save");
         if (save != null) Prefs.folder(this, "save_" + id, new File(save).getPath());
         if (i.getBooleanExtra("run", false)) for (Game g : games) if (GameList.samePath(g.gameDir, dir.getPath())) { launch(g); break; }
+    }
+
+    /** The intent without its adb control extras (AdbControl) while Prefs.adbControl refuses them: MainActivity is exported, so any app may send them (a toast and a
+     *  log line say that some were dropped). Ported from Anka Native 0.2.2 (EddizEge, MIT; its issue #7) */
+    private Intent gated(Intent i) {
+        if (i == null || Prefs.adbControl(this)) return i;
+        List<String> asked = AdbControl.asked(i::hasExtra);
+        if (asked.isEmpty()) return i;
+        android.util.Log.w("nxnative", "launcher intent from " + getReferrer() + " with " + asked + " ignored: ADB control is off (Settings › Help › ADB control)");
+        Toast.makeText(this, "A command from another app was ignored (Settings › ADB control is off)", Toast.LENGTH_LONG).show();
+        Intent out = new Intent(i);
+        for (String k : asked) out.removeExtra(k);
+        return out;
     }
 
     /** A game a frontend sent that needs the user (FrontendLaunch.ready): its card's Play says what is missing and offers the fix; a new game takes the steps of a picked one */
@@ -1273,6 +1311,9 @@ public final class MainActivity extends Activity {
 
     void error(String msg) { new AlertDialog.Builder(this).setMessage(msg).setPositiveButton("OK", null).show(); }
 
+    private static String padPanelLabel(int v) {
+        return PadPanel.OPEN_NAMES[v] + ". By touch: swipe in from the right edge, or Back";
+    }
     private static String touchLabel(int m) { return m == TouchControls.MODE_AUTO ? "Auto: hidden while a controller is connected" : TouchControls.MODE_NAMES[m]; }
     /** A default's choice in Settings (no "Default" entry: this is the default) */
     private void pick(String title, String[] items, int cur, java.util.function.IntConsumer set) {
