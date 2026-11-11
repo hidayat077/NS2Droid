@@ -129,6 +129,7 @@ def header_multi(progs):
         d = {m[1]: m[2] for m in (re.match(r'#define (DM_GAME_\w+) (.*)$', ln) for ln in header_one(g).splitlines()) if m}
         rows.append((n, g, d)); keys += [k for k in d if k not in keys]
     ARR = {'DM_GAME_MODULES': 0, 'DM_GAME_BUILD_MODULES': 2, 'DM_GAME_DISPLAY_VERSIONS': 2}   # brace lists, of strings (their entries in rows of 2 for the two), each padded with NULLs in the table
+    COMPOUND = {'DM_GAME_WINDOW_FN', 'DM_GAME_MESH_PREPASS_CUT', 'DM_GAME_FPS_DECOUPLE', 'DM_GAME_DRS_CTL', 'DM_GAME_RES_LEVELS'}
     for k in ('DM_GAME_SHARED_FONT_TTF', 'DM_GAME_NVN_API_MAJOR', 'DM_GAME_NVN_API_MINOR'):
         if k in keys: sys.exit(f'{k}: a key behind this macro (shared_font, device_api) is tested by the preprocessor and cannot differ per program; not supported with programs')
     typ = lambda v: 'const char *' if v.startswith('"') else 'uint64_t ' if v.endswith('ull') else 'int '
@@ -136,7 +137,7 @@ def header_multi(progs):
     # A macro's size in the table: the longest list among the programs
     strs = lambda v: re.findall(r'"(?:[^"\\]|\\.)*"', v)
     sz = {k: max(len(strs(d.get(k, ''))) for _, _, d in rows) for k in ARR}
-    scalars = [k for k in keys if k not in ARR]
+    scalars = [k for k in keys if k not in ARR and k not in COMPOUND]
     for k in scalars:
         vs = {typ(d[k]) for _, _, d in rows if k in d}
         if len(vs) > 1: sys.exit(f'{k}: different types among the programs')
@@ -149,6 +150,7 @@ def header_multi(progs):
           'const dm_game_t *dm_game_cur(void);   // main.c: the entry of the program DM_PROGRAM names']
     L += [f'#define {k} (dm_game_cur()->{fld(k)})' for k in scalars]
     L += [f'#define {k} {{' + ', '.join(f'dm_game_cur()->{fld(k)}[{i}]' for i in range(sz[k])) + '}' for k in ARR]
+    L += [f'#define {k} {next(d[k] for _, _, d in rows if k in d)}' for k in COMPOUND if any(k in d for _, _, d in rows)]
     return '\n'.join(L + [''])
 
 

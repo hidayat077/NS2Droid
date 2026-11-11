@@ -4,11 +4,20 @@ plugins {
     id 'com.android.application' version '8.13.2'
 }
 
+def repo = file('../..')
 // The games this APK runs: -PnxGames=<title ID>,<title ID>,... (default: gradle.properties' nxGames, every game supported on Android). Each has its profile (dm/games/<title ID>) compiled into a host of its
 // own, libnxhost_<title ID>.so with its libnxlaunch_<title ID>.so (src/main/cpp/CMakeLists.txt): the host has its profile compiled in, as dm/host/Makefile's GAME, so a game
-// runs only in an APK built with its profile. The first is the default (the graphics self-test loads its host)
-def nxGames = (providers.gradleProperty('nxGames').getOrElse('') ?: providers.gradleProperty('nxGame').getOrElse('')).split(',').collect { it.trim() }.findAll { it }.unique()
-if (!nxGames) throw new GradleException('nxGames: no game (gradle.properties names every supported one; -PnxGames=<title ID>,... builds fewer)')
+// runs only in an APK built with its profile. The first is the default (the graphics self-test loads its host). -PnxGames=all builds all registered profiles in dm/games.
+def rawGames = (providers.gradleProperty('nxGames').getOrElse('') ?: providers.gradleProperty('nxGame').getOrElse('')).split(',').collect { it.trim() }.findAll { it }.unique()
+if (!rawGames) throw new GradleException('nxGames: no game (gradle.properties names every supported one; -PnxGames=<title ID>,... builds fewer)')
+def nxGames
+if (rawGames.size() == 1 && rawGames[0].equalsIgnoreCase('all')) {
+    def allDirGames = new File(repo, 'dm/games').listFiles().findAll { it.isDirectory() && it.name ==~ /[0-9A-F]{16}/ && new File(it, 'game.tsv').isFile() }.collect { it.name }.sort()
+    allDirGames.remove('040074A01BF12000')
+    nxGames = ['040074A01BF12000'] + allDirGames
+} else {
+    nxGames = rawGames
+}
 nxGames.each { g ->
     if (!(g ==~ /[0-9A-F]{16}/)) throw new GradleException("nxGames: each game must be a title ID (16 upper-case hex digits), not $g")
 }
@@ -42,7 +51,6 @@ def nxPackEngine = providers.gradleProperty('nxPackEngine').getOrElse('native')
 if (!(nxPackEngine in ['fake', 'native'])) throw new GradleException("nxPackEngine must be native or fake, not $nxPackEngine")
 // What the on-device job checks a dump against and stamps its outputs with: the profile's builds (game.tsv build rows: version, then module=NSO build ID) and the
 // shader chain versions (a job translated with other versions starts its translation over, ONDEVICE.md "Versions")
-def repo = file('../..')
 nxGames.each { g -> if (!new File(repo, "dm/games/$g/game.tsv").isFile()) throw new GradleException("nxGames: $g has no profile (dm/games/$g/game.tsv)") }
 def tsvRows = { String game, String key -> def t = new File(repo, "dm/games/$game/game.tsv"); t.isFile() ? t.readLines().findAll { it.startsWith(key + '\t') }.collect { it.split('\t') } : [] }
 def buildsOf = { String game -> tsvRows(game, 'build').collect { c -> def m = (c[1] =~ /\d+/); (m.find() ? m.group() : c[1]) + (c.size() > 2 && c[2] ==~ /\d+(\.\d+)+/ ? ' @' + c[2] : '') + ' ' + c.drop(3).join(' ') }.join(';') }   // "<version> [@<display version>] <module>=<build ID> ..."
