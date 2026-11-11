@@ -110,7 +110,7 @@ static void host_preload(int argc, char **argv) {
     }
     static char pm[512];   // an Android pack names the modules it was made with (pack.tsv "modules"): a game whose registered builds have different module sets loads those of its dump's build
     if (!n) n = pack_modules(argv[1], pm, sizeof pm, names, DM_GAME_NMOD);
-    if (!n) { static const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
+    if (!n) { const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
     load_modules(argv[1], names, n);
     dm_cheats_init();   // the Atmosphère cheat files for this build (hle_cheats.c): picked by first 16 hex digits of main's build ID, which the loader knows now
     dm_sdk_major();   // logs the SDK version, which SDK-dependent behaviour follows (loader.c)
