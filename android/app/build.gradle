@@ -154,10 +154,14 @@ android {
         main {
             res.srcDirs += nxPlay || nxLive ? 'src/variant-play/res' : 'src/variant-test/res'
             java.srcDirs += 'src/ondevice/java'
+            assets.srcDirs += 'src/main/assets'
         }
         // The service and its permissions, merged over the main manifest (a build type's manifest is an overlay)
         release { manifest.srcFile 'src/ondevice/AndroidManifest.xml' }
         debug { manifest.srcFile 'src/ondevice/AndroidManifest.xml' }
+    }
+    androidResources {
+        noCompress 'zip'
     }
     signingConfigs {
         if (nxLive) live { storeFile file(signStore); storePassword signPass; keyAlias signAlias; keyPassword signPass }
