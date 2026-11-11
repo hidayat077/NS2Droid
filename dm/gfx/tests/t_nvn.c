@@ -360,6 +360,15 @@ int main(void) {
         P(nvnCommandBufferEndRecording)(&c2);
         memcpy(&rh, m, sizeof rh); d = draw_idx_rec(m + 8, rh.size, &dt);
         EXPECT("indirect draw keeps its address", 0x20000, d->ind);
+        // An indirect-count multi-draw: one record per draw, each naming the whole multi-draw (its size and stride: the Vulkan replay makes it at its first record with the
+        // count read by the GPU), in the same 0x38 bytes a record took before
+        P(nvnCommandBufferAddCommandMemory)(&c2, &mp, 0, sizeof m); P(nvnCommandBufferBeginRecording)(&c2);
+        P(nvnCommandBufferMultiDrawElementsIndirectCount)(&c2, NVN_DRAW_PRIMITIVE_TRIANGLES, NVN_INDEX_TYPE_UNSIGNED_SHORT, 0x10000, 0x20000, 0x30000, 3, 32);
+        P(nvnCommandBufferEndRecording)(&c2);
+        EXPECT("multi-draw of 3: three 0x38-byte records + END", 3 * 0x38 + 8, P(nvnCommandBufferGetCommandMemoryUsed)(&c2));
+        { int ok = 1; for (int i = 0; i < 3; i++) { memcpy(&rh, m + i * 0x38, sizeof rh); d = draw_idx_rec(m + i * 0x38 + 8, rh.size, &dt);
+              ok &= rh.op == OP_DRAW_IDX && d->ind == 0x20000 + 32u * (unsigned)i && d->mdi_cnt == 0x30000 && d->mdi_i == i && d->mdi_n == 3 && d->mdi_stride == 32; }
+          EXPECT("multi-draw records: record i at 0x20000 + 32 i, count address, index, size 3, stride 32", 1, ok); }
         // A single texture bind keeps its handle 16 bytes into the command, where a game that patches recorded commands writes a new one (Luigi's Mansion 3: base + GetCommandMemoryUsed + 0x10)
         P(nvnCommandBufferAddCommandMemory)(&c2, &mp, 0, sizeof m); P(nvnCommandBufferBeginRecording)(&c2);
         size_t at = P(nvnCommandBufferGetCommandMemoryUsed)(&c2);
@@ -924,6 +933,38 @@ int main(void) {
         EXPECT("1,048,576 R32 elements: 64 rows", 1, nvn_tbuf_rows(1048576, 4, 64, &w, &h, &row) && w == 16384 && h == 64 && row == 65536);
         EXPECT("no elements: no rows", 0, nvn_tbuf_rows(0, 4, 64, &w, &h, &row));
         EXPECT("several rows whose alignment would break the wrapped address: refused", 0, nvn_tbuf_rows(20000, 4, 3, &w, &h, &row));
+    }
+
+    // 9. Shader-code pools (hle_nvn.c "Shader-code pools", DM_VK_PLACE_SHADER_POOLS=0, the Android default): the table of live SHADER_CODE pools, which uses are program
+    // addresses (not placed for) and which hand the GPU data (placed for), and the key hash's read of code there. Metal places nothing (mtl_pool_need is a no-op), so this
+    // checks the table and the answers, not a placement
+    {
+        g_shp_place = 0; g_shp_log = 0;
+        static uint8_t shm[3][64 * 1024] __attribute__((aligned(4096)));
+        NVNmemoryPoolBuilder sb2; NVNmemoryPool sp[3];
+        for (int i = 0; i < 3; i++) {
+            P(nvnMemoryPoolBuilderSetDevice)(&sb2, &dev); P(nvnMemoryPoolBuilderSetDefaults)(&sb2);
+            P(nvnMemoryPoolBuilderSetStorage)(&sb2, shm[i], sizeof shm[i]); P(nvnMemoryPoolBuilderSetFlags)(&sb2, i == 2 ? 0x24 : 0x64);   // two SHADER_CODE pools, one not
+            P(nvnMemoryPoolInitialize)(&sp[i], &sb2);
+        }
+        uint64_t a0 = (uint64_t)(uintptr_t)shm[0], a1 = (uint64_t)(uintptr_t)shm[1], a2 = (uint64_t)(uintptr_t)shm[2], lo = 0, n = 0;
+        EXPECT("shader pools: two in the table", 2, atomic_load(&g_shp_n));
+        EXPECT("shader pools: code inside one is readable", 1, nvn_shader_code_readable(a0 + 0x100, 0x200));
+        EXPECT("shader pools: code past its end is not", 0, nvn_shader_code_readable(a0 + sizeof shm[0] - 0x10, 0x20));
+        EXPECT("shader pools: a pool without SHADER_CODE is not", 0, nvn_shader_code_readable(a2 + 0x100, 0x10));
+        EXPECT("shader pools: the pool's address is a program-address use", 1, shp_use(SHK_ADDR, a1, sizeof shm[1], NULL, NULL));
+        EXPECT("shader pools: and is not placed for", 1, shp_skip(SHK_ADDR, a1, sizeof shm[1]));
+        EXPECT("shader pools: a buffer object is not placed for", 1, shp_skip(SHK_BUFOBJ, a1 + 0x1000, 0x100));
+        EXPECT("shader pools: a uniform buffer is a data use", 2, shp_use(SHK_UBO, a1 + 0x2000, 0x100, &lo, &n));
+        EXPECT("shader pools: its range", 1, lo == a1 + 0x2000 && n == 0x100);
+        EXPECT("shader pools: a size not known runs to the pool's end", 1, shp_use(SHK_COPY, a1 + 0x3000, 0, &lo, &n) == 2 && lo == a1 + 0x3000 && n == sizeof shm[1] - 0x3000);
+        EXPECT("shader pools: an address in another pool is not theirs", 0, shp_use(SHK_UBO, a2 + 0x10, 0x10, NULL, NULL));
+        EXPECT("shader pools: GetBufferAddress still answers the storage address", (long long)a0, P(nvnMemoryPoolGetBufferAddress)(&sp[0]));
+        P(nvnMemoryPoolFinalize)(&sp[0]);
+        EXPECT("shader pools: Finalize takes it out of the table", 1, atomic_load(&g_shp_n) == 1 && !nvn_shader_code_readable(a0 + 0x100, 0x10) && nvn_shader_code_readable(a1 + 0x100, 0x10));
+        P(nvnMemoryPoolFinalize)(&sp[1]); P(nvnMemoryPoolFinalize)(&sp[2]);
+        EXPECT("shader pools: none left", 0, atomic_load(&g_shp_n));
+        g_shp_place = 1;
     }
 
     printf("== %d checks, %d failed ==\n", g_n, g_fail);

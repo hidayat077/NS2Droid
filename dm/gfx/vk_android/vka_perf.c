@@ -189,7 +189,7 @@ static void pace_cpu(char *b, size_t n) {   // "now/cap" MHz of each cpufreq pol
 // submission's start (vka_tex_prepare), the rest of the start, the commit; the remainder is the walk of the other records (passes, clears, copies, barriers, state). Then
 // the replay thread's and the encoder's scheduling: time on a core, time runnable but waiting for one (another thread had it), and their switches (voluntary: blocked
 // on a lock, a futex or a fence; involuntary: preempted); then the encoder's time by kind of call and the draw path by phase
-void vka_draw_pace(char *b, size_t n, double *draw_us); void vka_enc_pace(char *b, size_t n, double frames); void vka_exec_phases(uint64_t *begin, uint64_t *prep, uint64_t *commit);
+void vka_draw_pace(char *b, size_t n, double *draw_us); void vka_enc_pace(char *b, size_t n, double frames); void vka_exec_phases(uint64_t *begin, uint64_t *prep, uint64_t *commit); void vka_exec_commit_parts(uint64_t *enc, uint64_t *up, uint64_t *sub); void vka_submit_stats(uint64_t *lock_ns, uint64_t *call_ns, uint64_t *n); void vka_qhold_stats(uint64_t *v);
 int vka_rec_tid(void); int vka_enc_tid(void);
 static int pace_thr(int tid, vkpace_thr *o) {
     if (tid <= 0) return 0;
@@ -201,8 +201,8 @@ static int pace_thr(int tid, vkpace_thr *o) {
     return ok;
 }
 static void pace_cost(uint64_t f, double nf, uint64_t draws, double rec_ms) {
-    static int rtid, etid; static vkpace_thr r0, e0; static uint64_t b0, p0, c0;
-    uint64_t bg, pr, cm; vka_exec_phases(&bg, &pr, &cm);
+    static int rtid, etid; static vkpace_thr r0, e0; static uint64_t b0, p0, c0, ce0, cu0, cs0, ql0, qc0, qn0, qh0[4];
+    uint64_t bg, pr, cm, ce, cu, cs, ql, qc, qn, qh[4]; vka_qhold_stats(qh); vka_exec_phases(&bg, &pr, &cm); vka_exec_commit_parts(&ce, &cu, &cs); vka_submit_stats(&ql, &qc, &qn);
     int rt = vka_rec_tid(), et = vka_enc_tid(); vkpace_thr r1 = {0}, e1 = {0};
     int rok = pace_thr(rt, &r1), eok = pace_thr(et, &e1);
     int rfirst = rt != rtid, efirst = et != etid;   // (a new thread: its counters from the next window)
@@ -214,9 +214,11 @@ static void pace_cost(uint64_t f, double nf, uint64_t draws, double rec_ms) {
     else snprintf(rs, sizeof rs, "%s", rok ? "from the next line" : "not readable");
     if (eok && !efirst && nf) snprintf(es, sizeof es, "on a core %.1f ms, waited for a core %.1f ms, %.0f blocked / %.0f preempted switches", ed.run_ns / 1e6 / nf, ed.wait_ns / 1e6 / nf, ed.vol / nf, ed.invol / nf);
     else snprintf(es, sizeof es, "%s", eok ? "from the next line" : et ? "not readable" : "off");
-    if (nf) VLOG("pace cost up to frame %llu, a frame: recording %.1f ms = draws %.1f + texture prepare %.1f + submission start %.1f + commit %.1f + other records %.1f; replay thread %s; encoder %s; "
-                 "encoder calls ms (count): %s; %s", (unsigned long long)f, rec_ms, dms, pms, bms, cms, rec_ms - dms - pms - bms - cms, rs, es, ep[0] ? ep : "none", dp[0] ? dp : "no draws timed");
-    rtid = rt; etid = et; if (rok) r0 = r1; if (eok) e0 = e1; b0 = bg; p0 = pr; c0 = cm;
+    if (nf) VLOG("pace cost up to frame %llu, a frame: recording %.1f ms = draws %.1f + texture prepare %.1f + submission start %.1f + commit %.1f (encoder drain %.1f, uploads %.1f, queue submit %.1f) + other records %.1f; all queue submits %.1f a frame: their lock %.1f ms, the driver %.1f ms; the lock held by the present %.1f ms (its submit %.1f, vkQueuePresentKHR %.1f) and the GPU clock floor %.1f; replay thread %s; encoder %s; "
+                 "encoder calls ms (count): %s; %s", (unsigned long long)f, rec_ms, dms, pms, bms, cms, (ce - ce0) / 1e6 / nf, (cu - cu0) / 1e6 / nf, (cs - cs0) / 1e6 / nf,
+                 rec_ms - dms - pms - bms - cms, (qn - qn0) / nf, (ql - ql0) / 1e6 / nf, (qc - qc0) / 1e6 / nf,
+                 (qh[0] - qh0[0] + qh[1] - qh0[1]) / 1e6 / nf, (qh[0] - qh0[0]) / 1e6 / nf, (qh[1] - qh0[1]) / 1e6 / nf, (qh[2] - qh0[2]) / 1e6 / nf, rs, es, ep[0] ? ep : "none", dp[0] ? dp : "no draws timed");
+    rtid = rt; etid = et; if (rok) r0 = r1; if (eok) e0 = e1; b0 = bg; p0 = pr; c0 = cm; ce0 = ce; cu0 = cu; cs0 = cs; ql0 = ql; qc0 = qc; qn0 = qn; for (int i = 0; i < 4; i++) qh0[i] = qh[i];
 }
 static void pace_tick(double period_s) {
     static vkpace P; static uint64_t sampled;
@@ -263,6 +265,7 @@ void dm_perf_time_constraint(uint64_t period_ns, uint64_t comp_ns) {
 // waiting for the recording, i.e. a CPU stall on the replay thread, not GPU work
 void vka_worker_waits(uint64_t *room_ns, uint64_t *sub_ns); uint64_t vka_enc_waits(void); uint64_t vka_worker_sub_cpu(void);
 void vka_mem_waits(uint64_t *place_ns, uint64_t *place_bytes, uint64_t *place_n, uint64_t *give_ns, uint64_t *wait_rec_ns, uint64_t *wait_other_ns);
+void vka_tex_new_stats(uint64_t *n, uint64_t *ns);   // vka_tex.c: new images and the time they took on the replay thread (with their first content), for "new images" below
 // The busiest threads of a long frame. A sampler thread (dm-lfthreads) reads every thread's run time (/proc/self/task/<tid>/schedstat, ns; else stat's utime + stime in
 // clock ticks) every DM_LONGFRAME_THREADS ms (250; 0 = off, restart) into a ring. A frame of at least 100 ms posts a request at its end; the sampler takes a fresh reading
 // and names the 3 threads that ran most since the newest reading older than the frame's start (the window is the frame plus at most one period, and the moment the sampler
@@ -342,15 +345,17 @@ static void *ts_main(void *a) {
     return NULL;
 }
 void mtl_frame_extra(uint64_t f, char *out, size_t n) {
-    static uint64_t proom, psub, penc, psave, ppw, ppl, pplb, ppln, pgv, pwr, pwo, pt, psc; static int init;
+    static uint64_t proom, psub, penc, psave, ppw, ppl, pplb, ppln, pgv, pwr, pwo, pt, psc, pnn, pnns; static int init;
+    uint64_t nn = 0, nns = 0; vka_tex_new_stats(&nn, &nns);
     uint64_t room = 0, sub = 0, enc = vka_enc_waits(), save = 0, pw = 0, pl = 0, plb = 0, pln = 0, gv = 0, wr = 0, wo = 0, t = ts_now(), sc = vka_worker_sub_cpu(); vka_worker_waits(&room, &sub); vka_pso_waits(&save, &pw);
     vka_mem_waits(&pl, &plb, &pln, &gv, &wr, &wo);
     static int ts_on = -1; if (ts_on < 0) { ts_on = ts_period_ms() > 0; if (ts_on) { pthread_t th; if (pthread_create(&th, NULL, ts_main, NULL)) ts_on = 0; else pthread_detach(th); } }
     if (init && n) {
         snprintf(out, n, "game waited for the replay worker %.1f, replay recording %.1f (its CPU %.1f), replay waited for the encoder %.1f, cache save %.1f, waited for prewarm %.1f; "
-                         "pool placement %.1f ms (%llu pools, %.1f MB), give-back %.1f ms, the pool table's lock waited for: replay %.1f, others %.1f",
+                         "pool placement %.1f ms (%llu pools, %.1f MB), give-back %.1f ms, the pool table's lock waited for: replay %.1f, others %.1f; new images %llu, %.1f ms with their first content",
                  (room - proom) / 1e6, (sub - psub) / 1e6, (sc - psc) / 1e6, (enc - penc) / 1e6, (save - psave) / 1e6, (pw - ppw) / 1e6,
-                 (pl - ppl) / 1e6, (unsigned long long)(pln - ppln), (plb - pplb) / 1048576.0, (gv - pgv) / 1e6, (wr - pwr) / 1e6, (wo - pwo) / 1e6);
+                 (pl - ppl) / 1e6, (unsigned long long)(pln - ppln), (plb - pplb) / 1048576.0, (gv - pgv) / 1e6, (wr - pwr) / 1e6, (wo - pwo) / 1e6,
+                 (unsigned long long)(nn - pnn), (nns - pnns) / 1e6);
         if (ts_on && t - pt >= 100000000ull) {   // a long frame: the sampler names its busiest threads (read back at print time, mtl_gpu_extra)
             pthread_mutex_lock(&g_tsmu);
             int q = (int)(f % TS_REQ); g_tsq[q].f = f; g_tsq[q].since = pt; g_tsq[q].state = 1; g_tsq[q].s[0] = 0;
@@ -358,7 +363,7 @@ void mtl_frame_extra(uint64_t f, char *out, size_t n) {
             pthread_mutex_unlock(&g_tsmu);
         }
     } else if (n) out[0] = 0;
-    proom = room; psub = sub; penc = enc; psave = save; ppw = pw; ppl = pl; pplb = plb; ppln = pln; pgv = gv; pwr = wr; pwo = wo; pt = t; psc = sc; init = 1;
+    proom = room; psub = sub; penc = enc; psave = save; ppw = pw; ppl = pl; pplb = plb; ppln = pln; pgv = gv; pwr = wr; pwo = wo; pt = t; psc = sc; pnn = nn; pnns = nns; init = 1;
 }
 void mtl_gpu_extra(uint64_t f, char *out, size_t n) {
     double s = vka_gpu_span_ms(f), b = mtl_gpu_ms(f);

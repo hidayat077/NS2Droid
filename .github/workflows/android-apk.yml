@@ -104,7 +104,7 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NS2Droid-Android-APK
+          name: Pitch-Android-APK
           path: |
             android/app/out/*.apk
             android/app/build/outputs/apk/**/*.apk

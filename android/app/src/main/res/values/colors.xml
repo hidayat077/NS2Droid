@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The icon's background (dark gaming slate) behind the NS2Native console -->
-    <color name="ic_launcher_background">#FF12141A</color>
+    <!-- The icon's background (dark purple gaming slate) behind the Pitch logo -->
+    <color name="ic_launcher_background">#FF161224</color>
 
     <!-- The launcher's palette (Ui.java, themes.xml): ripe banana, cream, peel brown and the icon's leaf green. values-night has the dark set -->
     <color name="bn_bg">#FFFFF6E0</color>            <!-- the screen: cream -->
