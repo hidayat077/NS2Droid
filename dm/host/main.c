@@ -52,6 +52,20 @@ static uint64_t proc_start_mono_ns(void) {
     return age > 0 ? mono - (uint64_t)age : mono;
 }
 
+#ifdef DM_GAME_MULTI
+// A host over the programs of a multi-program application (game.py header_multi): the profile of the program DM_PROGRAM names, program 0 without it. One run is one program (hle_oe.c)
+const dm_game_t *dm_game_cur(void) {
+    static const dm_game_t *g;
+    if (!g) {
+        const char *e = getenv("DM_PROGRAM"); int p = e ? atoi(e) : 0;
+        const dm_game_t *cur = &dm_games[0];
+        for (size_t i = 0; i < sizeof dm_games / sizeof *dm_games; i++) if (dm_games[i].program == p) cur = &dm_games[i];
+        g = cur;
+    }
+    return g;
+}
+#endif
+
 // Host loading (independent of UIKit / Metal): read the NSO, relocate, forced take-over, probes / tick gate / keys, start prefetch. By default it runs synchronously in main;
 // the iOS front end can call dm_host_preload_start(same arguments) at the very start of the App's main() so that it runs first on a background thread, in parallel with the UIKit startup chain (⓪ + ① ≈ max(UIKit chain, host loading)).
 static pthread_key_t g_race_keys[512];

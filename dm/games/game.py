@@ -164,8 +164,8 @@ def header_multi(progs):
         if any(k in d for _, _, d in rows):
             L.append(f'#define {k} {next(d[k] for _, _, d in rows if k in d)}')
     L.append(f'#define DM_GAME_BUILD_MODULES {", ".join(all_bm) or "{0}"}')
-    if all_vers:
-        L.append(f'#define DM_GAME_DISPLAY_VERSIONS {", ".join(all_vers)}')
+    dvers = ", ".join(all_vers) or '{"", ""}'
+    L.append(f'#define DM_GAME_DISPLAY_VERSIONS {dvers}')
     return '\n'.join(L + [''])
 
 
